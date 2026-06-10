@@ -10,7 +10,7 @@ export default function Nav() {
 
   useEffect(() => {
     if (pathname === "/login") return;
-    fetch("/api/me").then((r) => (r.ok ? r.json() : null)).then(setMe).catch(() => {});
+    fetch("/api/me").then(r => r.ok ? r.json() : null).then(setMe).catch(() => {});
   }, [pathname]);
 
   if (pathname === "/login") return null;
@@ -22,7 +22,7 @@ export default function Nav() {
     ["/stats", "Frequency"],
     ["/settings", "Settings"],
   ];
-  if (me?.role === "admin") links.push(["/admin", "Admin"]);
+  if (me?.role === "admin") links.push(["/admin", "Admin ★"]);
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -31,17 +31,18 @@ export default function Nav() {
 
   return (
     <nav className="nav">
-      <Link href="/tracker" className="logo">OPS OUTREACH</Link>
+      <span className="nav-logo">Ops <span>Outreach</span></span>
       {links.map(([href, label]) => (
         <Link key={href} href={href} className={`navlink ${pathname === href ? "active" : ""}`}>{label}</Link>
       ))}
       <span className="navspacer" />
       {me && (
-        <span className="userchip">
+        <div className="userchip">
           {me.avatar_url && <img src={me.avatar_url} alt="" />}
-          {me.name} {me.role === "admin" && <span style={{ color: "#a78bfa" }}>★</span>}
-          <button className="btn" onClick={logout} style={{ marginLeft: 6, padding: "4px 10px" }}>Logout</button>
-        </span>
+          <span className="name">{me.name}</span>
+          {me.role === "admin" && <span className="admin-badge">ADMIN</span>}
+          <button className="btn btn-sm" onClick={logout} style={{ marginLeft: 4 }}>Sign out</button>
+        </div>
       )}
     </nav>
   );
