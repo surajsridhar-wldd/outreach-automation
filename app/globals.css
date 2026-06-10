@@ -64,7 +64,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--blue); box-shado
 .btn-purple { background: var(--purple-bg); color: var(--purple); border-color: var(--purple-border); }
 .btn-purple:hover:not(:disabled) { background: #ede9fe; }
 .btn-red { background: var(--red-bg); color: var(--red); border-color: var(--red-border); }
-.btn-sm { padding: 4px 10px; font-size: 12px; border-radius: 6px; }
+.btn-red { background: var(--red-bg); color: var(--red); border-color: var(--red-border); }
+.btn-red:hover:not(:disabled) { background: #fee2e2; }
 
 /* CARDS */
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; box-shadow: var(--shadow); }

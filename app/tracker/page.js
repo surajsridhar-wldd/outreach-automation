@@ -47,6 +47,15 @@ export default function Tracker() {
   const [sortBy, setSortBy]           = useState("created_at");
   const [sortDir, setSortDir]         = useState("desc");
 
+  const [reviewRecords, setReviewRecords] = useState([]);
+
+  const loadReview = useCallback(async () => {
+    const r = await fetch("/api/review").then(r => r.json());
+    setReviewRecords(r.records || []);
+  }, []);
+
+  useEffect(() => { if (section === "review") loadReview(); }, [section, loadReview]);
+
   const load = useCallback(async () => {
     const r = await fetch("/api/outreach").then(r=>r.json());
     setRecords(r.records||[]);
@@ -70,7 +79,7 @@ export default function Tracker() {
     let base;
     if (section==="outreach")  base = records.filter(r=>r.status==="pending"||ACTIVE.includes(r.status));
     else if (section==="followups") base = records.filter(r=>r.status==="no_reply"||r.status==="stalled");
-    else if (section==="review")    base = records.filter(r=>NEEDS_ACTION.includes(r.status));
+    else if (section==="review")    base = reviewRecords; // uses enriched data from /api/review
     else if (section==="resolved")  base = records.filter(r=>r.status==="resolved");
     else return [];
 
@@ -159,7 +168,8 @@ export default function Tracker() {
 
   async function decideReview(id,decision){
     await fetch("/api/review",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({id,decision})});
-    show("✅ Updated");load();
+    show(decision==="declined"?"↩ Moved back to follow-up queue":"✅ Updated");
+    load(); loadReview();
   }
 
   async function openDrawer(rec){
@@ -270,36 +280,11 @@ export default function Tracker() {
 
       {/* ── REVIEW SECTION ── */}
       {section==="review" && (
-        <div>
-          <p style={{fontSize:13,color:"#6b7280",marginBottom:16}}>Replies the system detected or wasn't confident about. You make the final call — nothing is auto-resolved without your confirmation.</p>
-          {view.length===0?(
-            <div className="empty"><div className="empty-icon">✨</div><h3>Nothing to review</h3><p>All detections were clear enough to handle automatically.</p></div>
-          ):view.map(r=>(
-            <div key={r.id} style={{background:"#fff",border:`1px solid ${r.status==="resolved_auto"?"#ddd6fe":r.status==="needs_review"?"#fde68a":"#a7f3d0"}`,borderLeft:`4px solid ${r.status==="resolved_auto"?"#7c3aed":r.status==="needs_review"?"#f59e0b":"#10b981"}`,borderRadius:10,padding:16,marginBottom:10}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:16}}>
-                <div style={{flex:1}}>
-                  <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:6}}>
-                    <span className="poc-name">{r.contacts?.name}</span>
-                    <span style={{fontSize:12,color:"#6b7280"}}>{r.contacts?.email}</span>
-                    {r.contacts?.campaign&&<span className="campaign-pill">{r.contacts.campaign}</span>}
-                  </div>
-                  <div className="issue-text" style={{marginBottom:8}}>{r.contacts?.issue}</div>
-                  <div style={{fontSize:12,color:r.status==="resolved_auto"?"#7c3aed":r.status==="needs_review"?"#92400e":"#065f46",fontWeight:500}}>
-                    {r.status==="resolved_auto"?"🤖 System thinks this is resolved":r.status==="replied"?"✅ Reply detected":"❓ Ambiguous reply — needs your call"}
-                    {r.message_notes&&<span style={{color:"#6b7280",fontWeight:400}}> — "{r.message_notes}"</span>}
-                    {r.reply_confidence!=null&&<span style={{color:"#9ca3af",fontWeight:400}}> ({Math.round(r.reply_confidence*100)}% confidence)</span>}
-                  </div>
-                </div>
-                <div style={{display:"flex",gap:8,flexWrap:"wrap",flexShrink:0}}>
-                  <button className="btn btn-sm btn-purple" onClick={()=>decideReview(r.id,"resolved")}>✓ Resolve</button>
-                  {r.status==="needs_review"&&<button className="btn btn-sm btn-green" onClick={()=>decideReview(r.id,"replied")}>It's a reply</button>}
-                  <button className="btn btn-sm" onClick={()=>decideReview(r.id,"awaiting_reply")}>Not a reply</button>
-                  <button className="btn btn-sm" onClick={()=>openDrawer(r)}>History</button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+        <ReviewSection
+          records={view}
+          onDecide={decideReview}
+          onDrawer={openDrawer}
+        />
       )}
 
       {/* ── OUTREACH + RESOLVED ── */}
@@ -421,6 +406,76 @@ export default function Tracker() {
       )}
 
       {toast&&<div className="toast" style={{background:toast.type==="error"?"#dc2626":"#111827"}}>{toast.msg}</div>}
+    </div>
+  );
+}
+
+function ReviewSection({ records, onDecide, onDrawer }) {
+  const statusLabel = {
+    resolved_auto: { icon:"🤖", text:"System thinks this is resolved", color:"#7c3aed", border:"#ddd6fe", accent:"#7c3aed" },
+    replied:       { icon:"✅", text:"Reply detected",                  color:"#065f46", border:"#a7f3d0", accent:"#10b981" },
+    needs_review:  { icon:"❓", text:"Ambiguous — needs your call",     color:"#92400e", border:"#fde68a", accent:"#f59e0b" },
+  };
+
+  if (records.length === 0) return (
+    <div className="empty"><div className="empty-icon">✨</div><h3>Nothing to review</h3><p>All reply detections were clear enough to handle automatically.</p></div>
+  );
+
+  return (
+    <div>
+      <p style={{fontSize:13,color:"#6b7280",marginBottom:16}}>
+        Replies the system detected or wasn't confident about. <strong>You make the final call</strong> — nothing moves to Resolved without your confirmation.
+      </p>
+      {records.map(r => {
+        const s = statusLabel[r.status] || statusLabel.needs_review;
+        const msgs = r.reply_messages || [];
+        return (
+          <div key={r.id} style={{background:"#fff",border:`1px solid ${s.border}`,borderLeft:`4px solid ${s.accent}`,borderRadius:10,padding:20,marginBottom:12}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:16,marginBottom:12}}>
+              <div>
+                <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
+                  <span style={{fontWeight:700,fontSize:14}}>{r.contacts?.name}</span>
+                  <span style={{fontSize:12,color:"#9ca3af"}}>{r.contacts?.email}</span>
+                  {r.contacts?.campaign&&<span className="campaign-pill">{r.contacts.campaign}</span>}
+                </div>
+                <div style={{fontSize:12,color:"#6b7280",marginBottom:8}}><strong>Issue:</strong> {r.contacts?.issue}</div>
+                <div style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12,fontWeight:600,color:s.color,background:s.border+"44",padding:"3px 10px",borderRadius:99}}>
+                  {s.icon} {s.text}
+                  {r.reply_confidence!=null&&<span style={{fontWeight:400,color:"#9ca3af"}}>({Math.round(r.reply_confidence*100)}% confidence)</span>}
+                </div>
+                {r.message_notes&&<div style={{fontSize:12,color:"#6b7280",marginTop:6,fontStyle:"italic"}}>💬 Summary: "{r.message_notes}"</div>}
+              </div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",flexShrink:0}}>
+                <button className="btn btn-sm btn-purple" onClick={()=>onDecide(r.id,"resolved")}>✓ Mark Resolved</button>
+                {r.status==="needs_review"&&<button className="btn btn-sm btn-green" onClick={()=>onDecide(r.id,"replied")}>👍 It's a reply</button>}
+                <button className="btn btn-sm btn-red" onClick={()=>onDecide(r.id,"declined")}>↩ Not resolved</button>
+                <button className="btn btn-sm" onClick={()=>onDrawer(r)}>History</button>
+              </div>
+            </div>
+            {msgs.length > 0 ? (
+              <div style={{background:"#f8f9fb",borderRadius:8,padding:12}}>
+                <div style={{fontSize:11,fontWeight:600,color:"#9ca3af",letterSpacing:".5px",textTransform:"uppercase",marginBottom:8}}>
+                  {msgs.length} message{msgs.length!==1?"s":""} received
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {msgs.map((msg,i)=>(
+                    <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+                      <span style={{fontSize:11,color:"#9ca3af",minWidth:20,marginTop:1}}>#{i+1}</span>
+                      <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:8,padding:"8px 12px",fontSize:13,color:"#374151",flex:1,lineHeight:1.5}}>
+                        {msg}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div style={{background:"#f8f9fb",borderRadius:8,padding:"10px 12px",fontSize:12,color:"#9ca3af",fontStyle:"italic"}}>
+                No message text available. Try checking replies again to re-capture.
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
