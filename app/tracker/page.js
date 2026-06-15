@@ -118,14 +118,22 @@ export default function Tracker() {
     setSection("outreach");load();
   }
 
+  const [sendProgress, setSendProgress] = useState(null); // { total, done, results }
+
   async function bulkSend(){
+    const total = selPending.length;
+    setSendProgress({ total, done: 0, results: [] });
     setBusy(b=>({...b,send:true}));
-    const r=await fetch("/api/outreach/bulk-send",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({ids:selPending,channel})}).then(r=>r.json());
-    setBusy(b=>({...b,send:false}));setSelected(new Set());
-    if(r.error)return show("⚠ "+r.error,"error");
-    const ok=r.results?.filter(x=>x.ok).length||0;
-    const failed=r.results?.filter(x=>!x.ok)||[];
-    show(`✅ Sent ${ok}${failed.length?` · ⚠ ${failed[0].error}`:""}`);
+
+    const r = await fetch("/api/outreach/bulk-send", {
+      method:"POST",
+      headers:{"content-type":"application/json"},
+      body:JSON.stringify({ids:selPending,channel}),
+    }).then(r=>r.json());
+
+    setBusy(b=>({...b,send:false}));
+    setSelected(new Set());
+    setSendProgress({ total, done: total, results: r.results || [] });
     load();
   }
 
@@ -337,7 +345,7 @@ export default function Tracker() {
                   <button className={`ch-btn ${channel==="slack"?"active":""}`} onClick={()=>setChannel("slack")}>💬 Slack</button>
                   <button className={`ch-btn ${channel==="email"?"active":""}`} onClick={()=>setChannel("email")}>📧 Email</button>
                 </div>
-                <button className="btn btn-primary btn-sm" disabled={busy.send} onClick={bulkSend}>{busy.send?"Sending…":`Send ${selPending.length} via ${channel}`}</button>
+                <button className="btn btn-primary btn-sm" disabled={busy.send} onClick={bulkSend}>{busy.send?`Sending ${selPending.length}…`:`Send ${selPending.length} via ${channel}`}</button>
               </>}
               {selCheckable.length>0&&<button className="btn btn-sm" style={{background:"rgba(255,255,255,.15)",color:"#fff",border:"1px solid rgba(255,255,255,.2)"}} disabled={busy.check} onClick={bulkCheck}>{busy.check?"…":`🔍 Check Replies (${selCheckable.length})`}</button>}
               {selResolvable.length>0&&<button className="btn btn-sm" style={{background:"rgba(255,255,255,.1)",color:"rgba(255,255,255,.8)",border:"1px solid rgba(255,255,255,.15)"}} disabled={busy.resolve} onClick={bulkResolve}>{busy.resolve?"…":`✓ Resolve (${selResolvable.length})`}</button>}
@@ -422,6 +430,50 @@ export default function Tracker() {
                 </div>
               ))
             }
+          </div>
+        </div>
+      )}
+
+      {/* Send Progress Modal */}
+      {sendProgress && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:300}}>
+          <div style={{background:"#fff",borderRadius:14,padding:28,width:460,boxShadow:"0 20px 60px rgba(0,0,0,.2)"}}>
+            <div style={{fontWeight:700,fontSize:16,marginBottom:4}}>
+              {sendProgress.done < sendProgress.total ? "Sending outreach…" : "Send complete"}
+            </div>
+            <div style={{fontSize:13,color:"#6b7280",marginBottom:20}}>
+              {sendProgress.done < sendProgress.total
+                ? `Processing ${sendProgress.total} message${sendProgress.total!==1?"s":""}…`
+                : `${sendProgress.results.filter(r=>r.ok).length} sent · ${sendProgress.results.filter(r=>!r.ok).length} failed`}
+            </div>
+
+            {/* Progress bar */}
+            <div style={{background:"#f3f4f6",borderRadius:99,height:6,marginBottom:20,overflow:"hidden"}}>
+              <div style={{
+                background: sendProgress.done < sendProgress.total ? "#3b82f6" : "#10b981",
+                width: `${(sendProgress.done/sendProgress.total)*100}%`,
+                height:"100%",borderRadius:99,transition:"width .3s"
+              }}/>
+            </div>
+
+            {/* Results list */}
+            {sendProgress.results.length > 0 && (
+              <div style={{maxHeight:240,overflowY:"auto",display:"flex",flexDirection:"column",gap:6,marginBottom:20}}>
+                {sendProgress.results.map((r,i)=>(
+                  <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,background:r.ok?"#f0fdf4":"#fef2f2",border:`1px solid ${r.ok?"#bbf7d0":"#fecaca"}`}}>
+                    <span style={{fontSize:14}}>{r.ok?"✅":"❌"}</span>
+                    <span style={{fontSize:13,fontWeight:500,flex:1,color:r.ok?"#065f46":"#991b1b"}}>{r.name}</span>
+                    {!r.ok&&<span style={{fontSize:11,color:"#ef4444",maxWidth:200,textAlign:"right"}}>{r.error}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {sendProgress.done >= sendProgress.total && (
+              <button className="btn btn-primary" style={{width:"100%"}} onClick={()=>setSendProgress(null)}>
+                Done
+              </button>
+            )}
           </div>
         </div>
       )}
