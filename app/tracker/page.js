@@ -96,7 +96,7 @@ export default function Tracker() {
   }
 
   const view = sectionRecords();
-  const selectableIds = view.filter(r=>["pending","sent","awaiting_reply","followup","no_reply"].includes(r.status)).map(r=>r.id);
+  const selectableIds = view.map(r=>r.id); // all rows selectable
   const selPending    = [...selected].filter(id=>records.find(r=>r.id===id)?.status==="pending");
   const selCheckable  = [...selected].filter(id=>["sent","awaiting_reply","followup","no_reply"].includes(records.find(r=>r.id===id)?.status));
   const selResolvable = [...selected].filter(id=>!["resolved"].includes(records.find(r=>r.id===id)?.status));
@@ -146,6 +146,17 @@ export default function Tracker() {
     const ok=r.results?.filter(x=>x.ok).length||0;
     const failed=r.results?.filter(x=>!x.ok)||[];
     show(`✅ ${ok} follow-up(s) sent${failed.length?` · ⚠ ${failed[0].error}`:""}`);
+    load();
+  }
+
+  async function bulkDelete() {
+    const ids = [...selected];
+    if (!confirm(`Delete ${ids.length} record(s)? This cannot be undone.`)) return;
+    setBusy(b=>({...b,del:true}));
+    await fetch("/api/outreach/bulk-update", { method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({ ids, action:"delete" }) });
+    setBusy(b=>({...b,del:false}));
+    setSelected(new Set());
+    show(`🗑 Deleted ${ids.length} record(s)`);
     load();
   }
 
@@ -329,7 +340,8 @@ export default function Tracker() {
                 <button className="btn btn-primary btn-sm" disabled={busy.send} onClick={bulkSend}>{busy.send?"Sending…":`Send ${selPending.length} via ${channel}`}</button>
               </>}
               {selCheckable.length>0&&<button className="btn btn-sm" style={{background:"rgba(255,255,255,.15)",color:"#fff",border:"1px solid rgba(255,255,255,.2)"}} disabled={busy.check} onClick={bulkCheck}>{busy.check?"…":`🔍 Check Replies (${selCheckable.length})`}</button>}
-              {selResolvable.length>0&&<button className="btn btn-sm" style={{background:"rgba(255,255,255,.1)",color:"rgba(255,255,255,.8)",border:"1px solid rgba(255,255,255,.15)",marginLeft:"auto"}} disabled={busy.resolve} onClick={bulkResolve}>{busy.resolve?"…":`✓ Resolve (${selResolvable.length})`}</button>}
+              {selResolvable.length>0&&<button className="btn btn-sm" style={{background:"rgba(255,255,255,.1)",color:"rgba(255,255,255,.8)",border:"1px solid rgba(255,255,255,.15)"}} disabled={busy.resolve} onClick={bulkResolve}>{busy.resolve?"…":`✓ Resolve (${selResolvable.length})`}</button>}
+              {selected.size>0&&<button className="btn btn-sm" style={{background:"rgba(220,38,38,.3)",color:"#fca5a5",border:"1px solid rgba(220,38,38,.4)",marginLeft:"auto"}} disabled={busy.del} onClick={bulkDelete}>{busy.del?"…":`🗑 Delete (${selected.size})`}</button>}
             </div>
           )}
 
