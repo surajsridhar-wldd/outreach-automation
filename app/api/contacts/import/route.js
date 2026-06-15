@@ -11,19 +11,74 @@ function normalizeRows(values) {
   const emailIdx = findKey(/email|mail/, -1);
   const issueIdx = findKey(/issue|error|problem|desc|note/, headers.length - 1);
   const campaignIdx = findKey(/campaign/, -1);
-  return values.slice(1).filter((r) => r.length).map((r) => ({
-    name: String(r[nameIdx] || "Unknown").trim(),
-    email: emailIdx >= 0 ? String(r[emailIdx] || "").trim() : "",
-    issue: String(r[issueIdx] || "").trim(),
-    campaign: campaignIdx >= 0 ? String(r[campaignIdx] || "").trim() : "",
-  }));
+  return values.slice(1)
+    .filter(r => r.length && r.some(f => f && String(f).trim()))  // skip fully empty rows
+    .map(r => ({
+      name:     String(r[nameIdx]     || "").trim(),
+      email:    emailIdx    >= 0 ? String(r[emailIdx]    || "").trim() : "",
+      issue:    String(r[issueIdx]    || "").trim(),
+      campaign: campaignIdx >= 0 ? String(r[campaignIdx] || "").trim() : "",
+    }))
+    .filter(r => r.name && r.name.length > 0); // must have a name
 }
 
 function parseCsvText(text) {
-  const lines = text.trim().split("\n").filter(Boolean);
-  const sep = lines[0].includes("\t") ? "\t" : ",";
-  return lines.map((l) => l.split(sep).map((c) => c.trim().replace(/^"|"$/g, "")));
+  // Detect separator from first line
+  const firstLine = text.split("\n")[0];
+  const sep = firstLine.includes("\t") ? "\t" : ",";
+
+  // Proper parser that handles quoted fields containing newlines and commas
+  const rows = [];
+  let row = [];
+  let field = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const next = text[i + 1];
+
+    if (inQuotes) {
+      if (ch === '"' && next === '"') {
+        // Escaped quote inside quoted field
+        field += '"';
+        i++;
+      } else if (ch === '"') {
+        // End of quoted field
+        inQuotes = false;
+      } else {
+        field += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === sep) {
+        row.push(field.trim());
+        field = "";
+      } else if (ch === "\n") {
+        row.push(field.trim());
+        // Only add non-empty rows (skip blank lines)
+        if (row.some(f => f.length > 0)) rows.push(row);
+        row = [];
+        field = "";
+        // Handle \r\n
+        if (next === "\r") i++;
+      } else if (ch === "\r") {
+        // skip
+      } else {
+        field += ch;
+      }
+    }
+  }
+
+  // Push last field/row
+  if (field.trim() || row.length) {
+    row.push(field.trim());
+    if (row.some(f => f.length > 0)) rows.push(row);
+  }
+
+  return rows;
 }
+
 
 export async function POST(req) {
   const user = await requireUser();
