@@ -1,6 +1,6 @@
 import { requireUser, unauthorized } from "@/lib/session";
 import { db, logEvent } from "@/lib/supabase";
-import { lookupByEmail, openDm, sendDm } from "@/lib/slack";
+import { lookupByEmail, lookupByName, openDm, sendDm } from "@/lib/slack";
 import { sendEmail } from "@/lib/gmail";
 import { outreachSubject, outreachBody, slackOutreach } from "@/lib/templates";
 
@@ -37,13 +37,16 @@ export async function POST(req) {
         patch.gmail_message_id = messageId;
         patch.gmail_thread_id = threadId;
       } else {
-        // Resolve slack id from email if not cached
+        // Resolve Slack ID: try cached → email → name
         let slackId = c.slack_user_id;
         if (!slackId && c.email) {
           slackId = await lookupByEmail(user, c.email);
-          if (slackId) await db.from("contacts").update({ slack_user_id: slackId }).eq("id", c.id);
         }
-        if (!slackId) throw new Error("Could not find this person on Slack by email");
+        if (!slackId && c.name) {
+          slackId = await lookupByName(user, c.name);
+        }
+        if (!slackId) throw new Error(`Could not find "${c.name}" on Slack. Check the name matches their Slack display name exactly.`);
+        if (slackId) await db.from("contacts").update({ slack_user_id: slackId }).eq("id", c.id);
         const channelId = await openDm(user, slackId);
         if (!channelId) throw new Error("Could not open Slack DM");
         const sent = await sendDm(user, channelId, slackOutreach(c, user.name));

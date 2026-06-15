@@ -222,7 +222,8 @@ export default function Tracker() {
         <div className="import-card">
           <h2 style={{fontSize:15,fontWeight:600,marginBottom:4}}>Import POCs from a table</h2>
           <p style={{fontSize:13,color:"#6b7280",marginBottom:20}}>Paste tab-separated or CSV data. Columns: <strong>Campaign</strong>, <strong>POC Name</strong>, <strong>Email</strong>, <strong>Issue</strong>.</p>
-          <div className="example-box">{"Campaign\tPOC Name\tEmail\tIssue\nQ2 GST Recon\tPriya Sharma\tpriya@corp.in\tMissing GST entries for March"}</div>
+          <div className="example-box">{"Campaign\tPOC Name\tEmail (optional)\tIssue\nAudible Views\tKirsten Menezes\t\tCampaign crossed posting end date on DMS\nQ2 GST Recon\tPriya Sharma\tpriya@corp.in\tMissing GST entries for March"}</div>
+          <p style={{fontSize:12,color:"#9ca3af",marginBottom:12}}>Email is optional for Slack outreach — we'll find them by name in your workspace. Required only for email outreach.</p>
           <div style={{marginBottom:12}}>
             <label>Google Sheet URL (optional)</label>
             <input placeholder="https://docs.google.com/spreadsheets/d/…" value={sheetUrl} onChange={e=>setSheetUrl(e.target.value)}/>
