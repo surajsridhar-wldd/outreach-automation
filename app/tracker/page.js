@@ -149,6 +149,13 @@ export default function Tracker() {
     load();
   }
 
+  async function deleteOne(id) {
+    if (!confirm("Delete this outreach? This cannot be undone.")) return;
+    const r = await fetch(`/api/outreach/${id}`, { method: "DELETE" }).then(r => r.json());
+    if (r.error) show("⚠ " + r.error, "error");
+    else show("🗑 Deleted"); load();
+  }
+
   async function resolveOne(id){
     await fetch(`/api/outreach/${id}`,{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({status:"resolved"})});
     show("✅ Resolved");load();
@@ -364,6 +371,7 @@ export default function Tracker() {
                             {needsConfirm&&<button className="btn btn-sm btn-purple" onClick={()=>setSection("review")}>Review →</button>}
                             {!["resolved","resolved_auto","replied","needs_review"].includes(r.status)&&<button className="btn btn-sm" style={{color:"#6b7280"}} onClick={()=>resolveOne(r.id)}>✓</button>}
                             <button className="btn btn-sm" onClick={()=>openDrawer(r)}>History</button>
+                            <button className="btn btn-sm" style={{color:"#ef4444",borderColor:"#fecaca"}} onClick={()=>deleteOne(r.id)} title="Delete this outreach">🗑</button>
                           </div>
                         </td>
                       </tr>
