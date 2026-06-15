@@ -1,18 +1,17 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 
 export default function Nav() {
   const [me, setMe] = useState(null);
+  const [counts, setCounts] = useState({});
   const pathname = usePathname();
   const router = useRouter();
-  const [counts, setCounts] = useState({});
 
-  useEffect(() => {
+  const refresh = useCallback(() => {
     if (pathname === "/login") return;
     fetch("/api/me").then(r => r.ok ? r.json() : null).then(setMe).catch(() => {});
-    // Load counts for badges
     fetch("/api/outreach").then(r => r.json()).then(d => {
       const c = {};
       (d.records || []).forEach(r => c[r.status] = (c[r.status] || 0) + 1);
@@ -20,17 +19,22 @@ export default function Nav() {
     }).catch(() => {});
   }, [pathname]);
 
+  useEffect(() => { refresh(); }, [refresh]);
+
   if (pathname === "/login") return null;
 
-  const followupCount = counts["no_reply"] || 0;
-  const reviewCount = (counts["needs_review"] || 0) + (counts["resolved_auto"] || 0) + (counts["replied"] || 0);
+  const noReply = (counts["no_reply"] || 0) + (counts["stalled"] || 0);
+  const reviewCount = counts["needs_review"] || 0;
 
   const links = [
-    { href: "/tracker",  label: "Tracker" },
-    { href: "/stats",    label: "Frequency" },
-    { href: "/settings", label: "Settings" },
+    { href: "/tracker",   label: "Outreach",   badge: counts["pending"] > 0 ? { n: counts["pending"], cls: "" } : null },
+    { href: "/inflight",  label: "In Flight",  badge: noReply > 0 ? { n: noReply, cls: "" } : null },
+    { href: "/review",    label: "Review",     badge: reviewCount > 0 ? { n: reviewCount, cls: "purple" } : null },
+    { href: "/resolved",  label: "Resolved",   badge: null },
+    { href: "/stats",     label: "Frequency",  badge: null },
+    { href: "/settings",  label: "Settings",   badge: null },
   ];
-  if (me?.role === "admin") links.push({ href: "/admin", label: "Admin ★" });
+  if (me?.role === "admin") links.push({ href: "/admin", label: "Admin ★", badge: null });
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -40,15 +44,10 @@ export default function Nav() {
   return (
     <nav className="nav">
       <span className="nav-logo">Ops <span>Outreach</span></span>
-      {links.map(({ href, label }) => (
+      {links.map(({ href, label, badge }) => (
         <Link key={href} href={href} className={`navlink ${pathname === href ? "active" : ""}`}>
           {label}
-          {href === "/tracker" && followupCount > 0 && (
-            <span style={{ background: "#ef4444", color: "#fff", borderRadius: 99, fontSize: 10, fontWeight: 700, padding: "1px 6px", marginLeft: 4 }}>{followupCount}</span>
-          )}
-          {href === "/tracker" && reviewCount > 0 && (
-            <span style={{ background: "#7c3aed", color: "#fff", borderRadius: 99, fontSize: 10, fontWeight: 700, padding: "1px 6px", marginLeft: 4 }}>{reviewCount}</span>
-          )}
+          {badge && <span className={`nav-badge ${badge.cls || ""}`}>{badge.n}</span>}
         </Link>
       ))}
       <span className="navspacer" />
