@@ -74,13 +74,19 @@ export default function TrackerPage() {
 
   // Load history for POC drawer
   async function openPocDrawer(rec) {
-    setPocDrawer({ rec, events:null });
-    if (!histories[rec.id]) {
-      const r = await fetch(`/api/outreach/${rec.id}/history`).then(r => r.json());
-      setHistories(h => ({ ...h, [rec.id]: r.events || [] }));
-      setPocDrawer(prev => prev?.rec.id === rec.id ? { rec, events: r.events || [] } : prev);
-    } else {
-      setPocDrawer({ rec, events: histories[rec.id] });
+    // Open immediately with what we have, then refetch fresh in the background
+    setPocDrawer({ rec, events: null });
+    await refreshPocDrawer(rec.id);
+  }
+
+  async function refreshPocDrawer(id) {
+    const [recRes, histRes] = await Promise.all([
+      fetch(`/api/outreach/${id}`).then(r => r.json()),
+      fetch(`/api/outreach/${id}/history`).then(r => r.json()),
+    ]);
+    if (recRes?.record) {
+      setHistories(h => ({ ...h, [id]: histRes.events || [] }));
+      setPocDrawer(prev => (prev && prev.rec.id === id) ? { rec: recRes.record, events: histRes.events || [] } : prev);
     }
   }
 
@@ -118,6 +124,8 @@ export default function TrackerPage() {
     // Reload current and adjacent tabs
     ["inflight","review"].forEach(t => loadTab(t));
     reload();
+    // If the drawer is open for one of these records, refresh it with the new live status
+    if (pocDrawer && ids.includes(pocDrawer.rec.id)) refreshPocDrawer(pocDrawer.rec.id);
   }
 
   async function sendFollowups(ids, channel) {
@@ -130,31 +138,34 @@ export default function TrackerPage() {
     const failed = (r.results||[]).filter(x=>!x.ok);
     show(`✅ ${ok} follow-up(s) sent via ${channel||"original channel"}${failed.length?` · ⚠ ${failed[0].error}`:""}`);
     reload();
+    if (pocDrawer && ids.includes(pocDrawer.rec.id)) refreshPocDrawer(pocDrawer.rec.id);
   }
 
   async function bulkResolve(ids) {
     await fetch("/api/outreach/bulk-update",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({ids,action:"resolve"})});
     setSelected(new Set()); show("✅ Resolved"); reload(); loadTab("resolved");
+    if (pocDrawer && ids.includes(pocDrawer.rec.id)) refreshPocDrawer(pocDrawer.rec.id);
   }
 
   async function bulkMonitor(ids) {
     const note = prompt("Optional note (e.g. 'waiting on finance team to confirm closing cost'):") || "";
     await fetch("/api/outreach/bulk-update",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({ids,action:"monitor",payload:{note}})});
     setSelected(new Set()); show("👁 Moved to Monitoring — no follow-ups will be sent"); reload(); loadTab("monitoring");
+    if (pocDrawer && ids.includes(pocDrawer.rec.id)) refreshPocDrawer(pocDrawer.rec.id);
   }
 
   async function patchOne(id, status) {
     await fetch(`/api/outreach/${id}`,{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({status})});
     reload(); loadTab("resolved"); loadTab("inflight");
-    if (pocDrawer?.rec.id === id) setPocDrawer(null);
     show("✅ Updated");
+    if (pocDrawer?.rec.id === id) refreshPocDrawer(id);
   }
 
   async function decideReview(id, decision) {
     await fetch("/api/review",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({id,decision})});
     show(decision==="resolved"?"✅ Resolved":decision==="declined"?"↩ Back to follow-up":"✅ Marked active");
     reload(); loadTab("inflight"); loadTab("resolved");
-    if (pocDrawer?.rec.id === id) setPocDrawer(null);
+    if (pocDrawer?.rec.id === id) refreshPocDrawer(id);
   }
 
   async function bulkDelete(ids) {
@@ -518,7 +529,7 @@ export default function TrackerPage() {
                       <button className="btn btn-orange btn-sm" onClick={()=>{setFollowupChannelIds([pocDrawer.rec.id]);setPocDrawer(null);}}>🔁 Follow-up</button>
                     )}
                     <button className="btn btn-purple btn-sm" onClick={()=>patchOne(pocDrawer.rec.id,"resolved")}>✓ Resolve</button>
-                    <button className="btn btn-sm" style={{background:"#ecfeff",color:"#0e7490",border:"1px solid #a5f3fc"}} onClick={()=>{bulkMonitor([pocDrawer.rec.id]);setPocDrawer(null);}}>👁 Monitor</button>
+                    <button className="btn btn-sm" style={{background:"#ecfeff",color:"#0e7490",border:"1px solid #a5f3fc"}} onClick={()=>bulkMonitor([pocDrawer.rec.id])}>👁 Monitor</button>
                     <button className="btn btn-sm" onClick={()=>{setEscalateIds([pocDrawer.rec.id]);setPocDrawer(null);}}>↗ Escalate</button>
                   </div>
                 </div>

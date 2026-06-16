@@ -1,6 +1,29 @@
 import { requireUser, unauthorized } from "@/lib/session";
 import { db, logEvent } from "@/lib/supabase";
 
+export async function GET(req, { params }) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
+  const { data: rec } = await db.from("outreach_records")
+    .select("*, contacts(name, email, campaign, issue)")
+    .eq("id", params.id).eq("user_id", user.id).single();
+  if (!rec) return Response.json({ error: "Not found" }, { status: 404 });
+
+  // Enrich with the latest reply messages if relevant
+  if (["active", "needs_review"].includes(rec.status)) {
+    const { data: events } = await db.from("outreach_history")
+      .select("payload")
+      .eq("outreach_id", rec.id)
+      .eq("action", "reply_classified")
+      .order("created_at", { ascending: false })
+      .limit(1);
+    rec.reply_messages = events?.[0]?.payload?.messages || [];
+  }
+
+  return Response.json({ record: rec });
+}
+
 export async function PATCH(req, { params }) {
   const user = await requireUser();
   if (!user) return unauthorized();
