@@ -67,6 +67,7 @@ export async function POST(req) {
 
         patch.slack_channel_id = channelId;
         patch.slack_message_ts = sent.ts;
+        patch.first_message_ts = sent.ts; // permanent anchor — never moves, used for DM history search
       }
 
       await db.from("outreach_records").update(patch).eq("id", rec.id);

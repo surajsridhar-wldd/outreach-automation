@@ -9,6 +9,7 @@ export const SC = {
   followup:     { label:"Follow-up Sent",   color:"#92400e", bg:"#fff7ed", border:"#fed7aa", dot:"#f97316" },
   stalled:      { label:"Stalled",          color:"#7f1d1d", bg:"#fef2f2", border:"#fca5a5", dot:"#dc2626" },
   needs_review: { label:"Needs Review",     color:"#92400e", bg:"#fffbeb", border:"#fde68a", dot:"#f59e0b" },
+  monitoring:   { label:"Monitoring",       color:"#0e7490", bg:"#ecfeff", border:"#a5f3fc", dot:"#06b6d4" },
   resolved:     { label:"Resolved",         color:"#4c1d95", bg:"#ede9fe", border:"#c4b5fd", dot:"#7c3aed" },
   escalated:    { label:"Escalated",        color:"#1e40af", bg:"#dbeafe", border:"#93c5fd", dot:"#2563eb" },
 };

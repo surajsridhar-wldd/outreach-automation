@@ -27,7 +27,6 @@ function parseCsvText(text) {
   const sep = firstLine.includes("\t") ? "\t" : ",";
   const rows = [];
   let row = [], field = "", inQuotes = false;
-
   for (let i = 0; i < text.length; i++) {
     const ch = text[i], next = text[i + 1];
     if (inQuotes) {
@@ -70,22 +69,32 @@ export async function POST(req) {
   const rows = normalizeRows(values);
   if (!rows.length) return Response.json({ error: "No data rows found" }, { status: 400 });
 
-  let created = 0, skipped = 0;
+  let created = 0, skipped = 0, refreshed = 0;
 
   for (const r of rows) {
-    // Dedup: check if this person+campaign already has a non-resolved outreach
     const { data: existing } = await db.from("contacts")
       .select("id, outreach_records(id, status)")
       .eq("user_id", user.id)
       .eq("campaign", r.campaign || "")
       .ilike("name", r.name)
-      .single();
+      .maybeSingle();
 
     if (existing) {
-      const hasActive = (existing.outreach_records || []).some(o =>
-        !["resolved", "escalated"].includes(o.status)
-      );
-      if (hasActive) { skipped++; continue; } // Already have an active outreach for this person+campaign
+      const outreaches = existing.outreach_records || [];
+      const activeOne = outreaches.find(o => ["sent","active","no_reply","followup","stalled","needs_review"].includes(o.status));
+      const monitoringOne = outreaches.find(o => o.status === "monitoring");
+
+      if (activeOne) {
+        // Already being actively worked — don't duplicate, don't touch
+        skipped++; continue;
+      }
+      if (monitoringOne) {
+        // Recurring known issue — refresh "last seen" timestamp, keep status as monitoring, don't duplicate
+        await db.from("outreach_records").update({ last_action_at: new Date().toISOString() }).eq("id", monitoringOne.id);
+        await logEvent({ outreachId: monitoringOne.id, userId: user.id, action: "note_added", payload: { note: "Re-appeared in latest import — still monitoring" } });
+        refreshed++; continue;
+      }
+      // else: only resolved/escalated exist for this person+campaign → treat as a fresh new issue, fall through to create
     }
 
     const { data: contact } = await db.from("contacts").insert({
@@ -101,5 +110,5 @@ export async function POST(req) {
     created++;
   }
 
-  return Response.json({ ok: true, created, skipped });
+  return Response.json({ ok: true, created, skipped, refreshed });
 }

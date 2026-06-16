@@ -3,10 +3,11 @@ import { useEffect, useState, useCallback } from "react";
 import { Badge, DaysChip, days, SC, CampaignDrawer, EditModal, EscalateModal, BulkBar, SendProgressModal } from "@/components/shared";
 
 const TABS = [
-  { id:"outreach",  label:"Outreach",   statuses:["pending"],                          help:"Imported but not yet sent." },
-  { id:"inflight",  label:"In Flight",  statuses:["sent","active","no_reply","followup","stalled"], help:"Sent. Waiting for reply or follow-up." },
-  { id:"review",    label:"Review",     statuses:["needs_review"],                     help:"System found a reply but isn't sure it's related. You decide." },
-  { id:"resolved",  label:"Resolved",   statuses:["resolved","escalated"],             help:"Closed out — either resolved by you or handed off." },
+  { id:"outreach",   label:"Outreach",   statuses:["pending"],                          help:"Imported but not yet sent." },
+  { id:"inflight",   label:"In Flight",  statuses:["sent","active","no_reply","followup","stalled"], help:"Sent. Waiting for reply or follow-up." },
+  { id:"review",     label:"Review",     statuses:["needs_review"],                     help:"System found a reply but isn't sure it's related. You decide." },
+  { id:"monitoring", label:"Monitoring", statuses:["monitoring"],                       help:"Acknowledged — no action needed right now, will resolve in due time. No follow-ups sent. Re-imports of the same issue just refresh the date, no duplicates." },
+  { id:"resolved",   label:"Resolved",   statuses:["resolved","escalated"],             help:"Closed out — either resolved by you or handed off." },
 ];
 
 const STATE_HELP = {
@@ -17,6 +18,7 @@ const STATE_HELP = {
   followup:     "Follow-up sent. Waiting again.",
   stalled:      "3+ follow-ups sent with no response. Needs escalation.",
   needs_review: "System found a Slack DM but isn't confident it relates to your issue.",
+  monitoring:   "Acknowledged. Will resolve in due time — no action needed from you right now.",
   resolved:     "You manually marked this done.",
   escalated:    "Handed off to someone else.",
 };
@@ -39,6 +41,8 @@ export default function TrackerPage() {
   const [checkingIds, setCheckingIds] = useState(new Set());
   const [histories, setHistories]   = useState({});         // { outreach_id: events[] }
   const [filterCampaign, setFilterCampaign] = useState("");
+  const [search, setSearch] = useState("");
+  const [followupChannelIds, setFollowupChannelIds] = useState(null); // ids pending channel choice for follow-up
   const [filterStatus, setFilterStatus] = useState("");
 
   const loadTab = useCallback(async (t) => {
@@ -52,9 +56,16 @@ export default function TrackerPage() {
 
   const currentRecs = records[tab] || [];
   const campaigns = [...new Set(currentRecs.map(r => r.contacts?.campaign).filter(Boolean))];
+  const searchLower = search.trim().toLowerCase();
   const view = currentRecs
     .filter(r => !filterCampaign || r.contacts?.campaign === filterCampaign)
-    .filter(r => !filterStatus || r.status === filterStatus);
+    .filter(r => !filterStatus || r.status === filterStatus)
+    .filter(r => !searchLower ||
+      (r.contacts?.name||"").toLowerCase().includes(searchLower) ||
+      (r.contacts?.campaign||"").toLowerCase().includes(searchLower) ||
+      (r.contacts?.email||"").toLowerCase().includes(searchLower) ||
+      (r.contacts?.issue||"").toLowerCase().includes(searchLower)
+    );
 
   function show(msg, type="info") { setToast({ msg, type }); setTimeout(() => setToast(null), 5000); }
   function toggle(id) { setSelected(s => { const n = new Set(s); n.has(id)?n.delete(id):n.add(id); return n; }); }
@@ -109,18 +120,27 @@ export default function TrackerPage() {
     reload();
   }
 
-  async function sendFollowups(ids) {
+  async function sendFollowups(ids, channel) {
     setBusy(b=>({...b,fu:true}));
-    const r = await fetch("/api/followups/send",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({ids})}).then(r=>r.json());
+    const r = await fetch("/api/followups/send",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({ids, channel})}).then(r=>r.json());
     setBusy(b=>({...b,fu:false}));
     setSelected(new Set());
-    show(`✅ ${(r.results||[]).filter(x=>x.ok).length} follow-up(s) sent`);
+    setFollowupChannelIds(null);
+    const ok = (r.results||[]).filter(x=>x.ok).length;
+    const failed = (r.results||[]).filter(x=>!x.ok);
+    show(`✅ ${ok} follow-up(s) sent via ${channel||"original channel"}${failed.length?` · ⚠ ${failed[0].error}`:""}`);
     reload();
   }
 
   async function bulkResolve(ids) {
     await fetch("/api/outreach/bulk-update",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({ids,action:"resolve"})});
     setSelected(new Set()); show("✅ Resolved"); reload(); loadTab("resolved");
+  }
+
+  async function bulkMonitor(ids) {
+    const note = prompt("Optional note (e.g. 'waiting on finance team to confirm closing cost'):") || "";
+    await fetch("/api/outreach/bulk-update",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({ids,action:"monitor",payload:{note}})});
+    setSelected(new Set()); show("👁 Moved to Monitoring — no follow-ups will be sent"); reload(); loadTab("monitoring");
   }
 
   async function patchOne(id, status) {
@@ -191,9 +211,19 @@ export default function TrackerPage() {
       </div>
 
       {/* State explanation */}
-      <p style={{ fontSize:12, color:"#9ca3af", marginBottom:16 }}>
+      <p style={{ fontSize:12, color:"#9ca3af", marginBottom:12 }}>
         {TABS.find(t=>t.id===tab)?.help}
       </p>
+
+      {/* Search bar — always visible */}
+      <div style={{ marginBottom:16 }}>
+        <input
+          placeholder="🔍 Search by POC name, campaign, email, or issue…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{ maxWidth:420 }}
+        />
+      </div>
 
       {/* ── OUTREACH TAB ── */}
       {tab==="outreach" && (
@@ -258,7 +288,8 @@ export default function TrackerPage() {
           <SelectAllRow total={view.length} selected={selected.size} onToggle={toggleAll} />
           <BulkBar selected={selected.size}>
             {selCheckable.length>0 && <button className="btn btn-green btn-sm" disabled={checkingIds.size>0} onClick={()=>checkReplies(selCheckable)}>🔍 Check Replies ({selCheckable.length})</button>}
-            {selNoReply.length>0 && <button className="btn btn-orange btn-sm" disabled={busy.fu} onClick={()=>sendFollowups(selNoReply)}>🔁 Follow-up ({selNoReply.length})</button>}
+            {selNoReply.length>0 && <button className="btn btn-orange btn-sm" disabled={busy.fu} onClick={()=>setFollowupChannelIds(selNoReply)}>🔁 Follow-up ({selNoReply.length})</button>}
+            {selResolvable.length>0 && <button className="btn btn-sm" style={{background:"#ecfeff",color:"#0e7490",border:"1px solid #a5f3fc"}} onClick={()=>bulkMonitor([...selected])}>👁 Monitor</button>}
             {selResolvable.length>0 && <button className="btn btn-purple btn-sm" onClick={()=>bulkResolve([...selected])}>✓ Resolve ({selResolvable.length})</button>}
             {selected.size>0 && <button className="btn btn-sm" style={{background:"rgba(255,255,255,.1)",color:"rgba(255,255,255,.8)",border:"1px solid rgba(255,255,255,.2)",marginLeft:"auto"}} onClick={()=>setEscalateIds([...selected])}>↗ Escalate</button>}
           </BulkBar>
@@ -286,7 +317,8 @@ export default function TrackerPage() {
                         <td><Cell><span style={{fontSize:12,fontWeight:600,color:r.followups>0?"#d97706":"#9ca3af"}}>{r.followups||0}</span></Cell></td>
                         <td><Cell gap>
                           {["sent","active","no_reply","followup","stalled"].includes(r.status)&&<button className="btn btn-green btn-sm" disabled={checking} onClick={()=>checkReplies([r.id])}>{checking?"…":"🔍"}</button>}
-                          {["no_reply","stalled","followup"].includes(r.status)&&<button className="btn btn-orange btn-sm" disabled={busy.fu} onClick={()=>sendFollowups([r.id])}>🔁</button>}
+                          {["no_reply","stalled","followup"].includes(r.status)&&<button className="btn btn-orange btn-sm" disabled={busy.fu} onClick={()=>setFollowupChannelIds([r.id])}>🔁</button>}
+                          <button className="btn btn-sm" style={{background:"#ecfeff",color:"#0e7490",border:"1px solid #a5f3fc",fontSize:11}} onClick={()=>bulkMonitor([r.id])} title="Acknowledge — no action needed right now">👁</button>
                           <button className="btn btn-purple btn-sm" onClick={()=>patchOne(r.id,"resolved")}>✓</button>
                           <button className="btn btn-sm" style={{fontSize:11}} onClick={()=>setEscalateIds([r.id])}>↗</button>
                           <button className="btn btn-sm" style={{color:"#6b7280"}} onClick={()=>openPocDrawer(r)}>Details</button>
@@ -354,6 +386,47 @@ export default function TrackerPage() {
               </div>
             );
           })}
+        </>
+      )}
+
+      {/* ── MONITORING TAB ── */}
+      {tab==="monitoring" && (
+        <>
+          <div style={{background:"#ecfeff",border:"1px solid #a5f3fc",borderRadius:8,padding:"10px 14px",marginBottom:16,fontSize:13,color:"#0e7490"}}>
+            👁 These are acknowledged — you're waiting on something out of your control (their side, another team, the system). No follow-ups go out automatically. If the same person + campaign issue comes up again in a future import, it just refreshes the date here — it won't create a duplicate or re-send anything.
+          </div>
+          <SelectAllRow total={view.length} selected={selected.size} onToggle={toggleAll} />
+          {selected.size>0 && (
+            <div style={{display:"flex",gap:8,marginBottom:12}}>
+              <button className="btn btn-purple btn-sm" onClick={()=>bulkResolve([...selected])}>✓ Resolve selected</button>
+              <button className="btn btn-sm" onClick={()=>setEscalateIds([...selected])}>↗ Escalate selected</button>
+            </div>
+          )}
+          {view.length===0 ? (
+            <div className="empty"><div className="empty-icon">👁</div><h3>Nothing being monitored</h3><p>Move a record here when you're waiting on something with no clear timeline yet.</p></div>
+          ) : (
+            <div className="tbl-wrap">
+              <table>
+                <thead><tr><th style={{width:32}}></th><th>POC</th><th>CAMPAIGN</th><th>NOTE</th><th>LAST SEEN</th><th>ACTIONS</th></tr></thead>
+                <tbody>
+                  {view.map(r=>(
+                    <tr key={r.id}>
+                      <td><Chk checked={selected.has(r.id)} onChange={()=>toggle(r.id)}/></td>
+                      <td><Cell onClick={()=>openPocDrawer(r)} clickable><div className="poc-name">{r.contacts?.name}</div><div className="poc-email">{r.contacts?.email||"—"}</div></Cell></td>
+                      <td><Cell>{r.contacts?.campaign?<span className="campaign-pill" onClick={()=>setDrawer(r.contacts.campaign)}>{r.contacts.campaign} ↗</span>:"—"}</Cell></td>
+                      <td><Cell><div style={{fontSize:12,color:"#6b7280",fontStyle:"italic",maxWidth:240}}>{r.message_notes||"—"}</div></Cell></td>
+                      <td><Cell><span style={{fontSize:12,color:"#9ca3af"}}>{r.last_action_at?new Date(r.last_action_at).toLocaleDateString():"—"}</span></Cell></td>
+                      <td><Cell gap>
+                        <button className="btn btn-purple btn-sm" onClick={()=>bulkResolve([r.id])}>✓</button>
+                        <button className="btn btn-sm" onClick={()=>setEscalateIds([r.id])}>↗</button>
+                        <button className="btn btn-sm" onClick={()=>openPocDrawer(r)}>Details</button>
+                      </Cell></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       )}
 
@@ -442,9 +515,10 @@ export default function TrackerPage() {
                       <button className="btn btn-green btn-sm" disabled={checkingIds.has(pocDrawer.rec.id)} onClick={()=>checkReplies([pocDrawer.rec.id])}>🔍 Check Reply</button>
                     )}
                     {["no_reply","stalled","followup"].includes(pocDrawer.rec.status)&&(
-                      <button className="btn btn-orange btn-sm" onClick={()=>{sendFollowups([pocDrawer.rec.id]);setPocDrawer(null);}}>🔁 Follow-up</button>
+                      <button className="btn btn-orange btn-sm" onClick={()=>{setFollowupChannelIds([pocDrawer.rec.id]);setPocDrawer(null);}}>🔁 Follow-up</button>
                     )}
                     <button className="btn btn-purple btn-sm" onClick={()=>patchOne(pocDrawer.rec.id,"resolved")}>✓ Resolve</button>
+                    <button className="btn btn-sm" style={{background:"#ecfeff",color:"#0e7490",border:"1px solid #a5f3fc"}} onClick={()=>{bulkMonitor([pocDrawer.rec.id]);setPocDrawer(null);}}>👁 Monitor</button>
                     <button className="btn btn-sm" onClick={()=>{setEscalateIds([pocDrawer.rec.id]);setPocDrawer(null);}}>↗ Escalate</button>
                   </div>
                 </div>
@@ -491,6 +565,25 @@ export default function TrackerPage() {
 
       {/* Escalate modal */}
       {escalateIds&&<EscalateModal ids={escalateIds} records={currentRecs} onClose={()=>setEscalateIds(null)} onDone={()=>{reload();loadTab("outreach");}}/>}
+
+      {/* Follow-up channel picker */}
+      {followupChannelIds && (
+        <div className="modal-overlay">
+          <div className="modal" style={{ width:380 }}>
+            <h3>Send Follow-up Via</h3>
+            <p style={{ fontSize:13, color:"#6b7280", marginBottom:18 }}>
+              Choose a channel for this follow-up. If they're not checking Slack, email is a good way to keep them accountable.
+            </p>
+            <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:18 }}>
+              <button className="btn btn-sm" style={{ justifyContent:"flex-start", padding:"12px 14px" }} disabled={busy.fu} onClick={()=>sendFollowups(followupChannelIds, "slack")}>💬 Slack DM</button>
+              <button className="btn btn-sm" style={{ justifyContent:"flex-start", padding:"12px 14px" }} disabled={busy.fu} onClick={()=>sendFollowups(followupChannelIds, "email")}>📧 Email</button>
+            </div>
+            <div style={{ display:"flex", justifyContent:"flex-end" }}>
+              <button className="btn" onClick={()=>setFollowupChannelIds(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Send progress */}
       <SendProgressModal progress={progress} onClose={()=>setProgress(null)}/>

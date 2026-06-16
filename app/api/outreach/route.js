@@ -17,18 +17,17 @@ export async function GET(req) {
   const { data, error } = await q;
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
-  // For needs_review records, enrich with reply messages from history
+  // Enrich active + needs_review records with reply messages from history
   const records = data || [];
-  const reviewRecs = records.filter(r => r.status === "needs_review");
-  if (reviewRecs.length > 0) {
-    const ids = reviewRecs.map(r => r.id);
+  const toEnrich = records.filter(r => ["needs_review", "active"].includes(r.status));
+  if (toEnrich.length > 0) {
+    const ids = toEnrich.map(r => r.id);
     const { data: events } = await db.from("outreach_history")
       .select("outreach_id, payload")
       .in("outreach_id", ids)
       .eq("action", "reply_classified")
       .order("created_at", { ascending: false });
 
-    // Build map: outreach_id → latest reply messages
     const msgMap = {};
     for (const e of (events || [])) {
       if (!msgMap[e.outreach_id] && e.payload?.messages?.length) {
@@ -36,7 +35,7 @@ export async function GET(req) {
       }
     }
     records.forEach(r => {
-      if (r.status === "needs_review") r.reply_messages = msgMap[r.id] || [];
+      if (["needs_review", "active"].includes(r.status)) r.reply_messages = msgMap[r.id] || [];
     });
   }
 

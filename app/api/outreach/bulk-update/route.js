@@ -34,20 +34,22 @@ export async function POST(req) {
           await logEvent({ outreachId: id, userId: user.id, action: "resolved", prevStatus: rec.status, newStatus: "resolved" });
           results.push({ id, ok: true });
 
+        } else if (action === "monitor") {
+          // Acknowledged, no current action needed, will resolve in due time. No follow-ups sent while monitoring.
+          const note = payload?.note || "";
+          await db.from("outreach_records").update({
+            status: "monitoring", message_notes: note || rec.message_notes, last_action_at: new Date().toISOString(),
+          }).eq("id", id);
+          await logEvent({ outreachId: id, userId: user.id, action: "status_changed", prevStatus: rec.status, newStatus: "monitoring", payload: { note } });
+          results.push({ id, ok: true });
+
         } else if (action === "escalate") {
-          // escalateTo = { name, email } of person to reassign to
           const note = payload?.note || "";
           const escalateTo = payload?.escalateTo || null;
           await db.from("outreach_records").update({
-            status: "escalated",
-            message_notes: note,
-            last_action_at: new Date().toISOString(),
+            status: "escalated", message_notes: note, last_action_at: new Date().toISOString(),
           }).eq("id", id);
-          await logEvent({
-            outreachId: id, userId: user.id, action: "status_changed",
-            prevStatus: rec.status, newStatus: "escalated",
-            payload: { note, escalateTo },
-          });
+          await logEvent({ outreachId: id, userId: user.id, action: "status_changed", prevStatus: rec.status, newStatus: "escalated", payload: { note, escalateTo } });
           results.push({ id, ok: true });
 
         } else if (action === "set_status") {
