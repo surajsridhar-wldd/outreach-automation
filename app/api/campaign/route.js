@@ -9,7 +9,7 @@ export async function GET(req) {
 
   // All outreach records for this campaign belonging to this user
   const { data: records } = await db.from("outreach_records")
-    .select("*, contacts(name, email, campaign, issue)")
+    .select("*, contacts(id, name, email, campaign, issue)")
     .eq("user_id", user.id)
     .order("created_at", { ascending: true });
 

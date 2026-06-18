@@ -11,7 +11,7 @@ export async function GET(req) {
   // Build stats from outreach_records + contacts directly
   // (more reliable than the view which can miss bulk sends)
   let q = db.from("outreach_records")
-    .select("*, contacts(name, email, campaign)")
+    .select("*, contacts(id, name, email, campaign)")
     .neq("status", "pending") // only count sent ones
     .order("created_at", { ascending: false });
 

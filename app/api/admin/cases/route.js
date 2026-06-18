@@ -6,7 +6,7 @@ export async function GET() {
   if (!user) return unauthorized();
   if (user.role !== "admin") return Response.json({ error: "Admin only" }, { status: 403 });
   const { data } = await db.from("outreach_records")
-    .select("*, contacts(name, email, campaign, issue), users:user_id(name)")
+    .select("*, contacts(id, name, email, campaign, issue), users:user_id(name)")
     .order("created_at", { ascending: false })
     .limit(500);
   return Response.json({ records: data || [] });

@@ -5,7 +5,7 @@ export async function GET() {
   const user = await requireUser();
   if (!user) return unauthorized();
   const { data: records } = await db.from("outreach_records")
-    .select("*, contacts(name, email, campaign, issue)")
+    .select("*, contacts(id, name, email, campaign, issue)")
     .eq("user_id", user.id)
     .eq("status", "needs_review")
     .order("last_action_at", { ascending: false });

@@ -6,7 +6,7 @@ export async function GET(req, { params }) {
   if (!user) return unauthorized();
 
   const { data: rec } = await db.from("outreach_records")
-    .select("*, contacts(name, email, campaign, issue)")
+    .select("*, contacts(id, name, email, campaign, issue)")
     .eq("id", params.id).eq("user_id", user.id).single();
   if (!rec) return Response.json({ error: "Not found" }, { status: 404 });
 

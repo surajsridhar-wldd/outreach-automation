@@ -140,6 +140,7 @@ export function EditModal({ contact, onClose, onSaved }) {
   const [error, setError] = useState(null);
 
   async function save() {
+    if (!contact?.id) { setError("Internal error: contact ID missing — please refresh the page and try again."); return; }
     setBusy(true);
     const r = await fetch(`/api/contacts/${contact.id}`, { method:"PATCH", headers:{"content-type":"application/json"}, body:JSON.stringify(form) }).then(r => r.json());
     setBusy(false);

@@ -8,7 +8,7 @@ export async function GET(req) {
   const statusFilter = url.searchParams.get("status");
 
   let q = db.from("outreach_records")
-    .select("*, contacts(name, email, campaign, issue)")
+    .select("*, contacts(id, name, email, campaign, issue)")
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 
