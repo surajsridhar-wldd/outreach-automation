@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 
 export default function StatsPage() {
   const [stats, setStats] = useState([]);
@@ -9,9 +9,24 @@ export default function StatsPage() {
 
   useEffect(() => { fetch("/api/me").then(r => r.json()).then(setMe); }, []);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     fetch(`/api/stats?scope=${scope}`).then(r => r.json()).then(d => setStats(d.stats || []));
   }, [scope]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Re-fetch whenever the tab regains focus or becomes visible again —
+  // covers the case where outreach was sent elsewhere and you switch back here.
+  useEffect(() => {
+    function onFocus() { load(); }
+    function onVisible() { if (document.visibilityState === "visible") load(); }
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [load]);
 
   async function download() {
     setDownloading(true);
@@ -30,9 +45,12 @@ export default function StatsPage() {
     <div>
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4 }}>
         <h1 style={{ fontSize:20, fontWeight:700, letterSpacing:"-.4px" }}>Frequency Tracker</h1>
-        <button className="btn btn-green btn-sm" disabled={downloading || !stats.length} onClick={download}>
-          {downloading ? "Downloading…" : "⬇ Download CSV"}
-        </button>
+        <div style={{ display:"flex", gap:8 }}>
+          <button className="btn btn-sm" onClick={load}>↻ Refresh</button>
+          <button className="btn btn-green btn-sm" disabled={downloading || !stats.length} onClick={download}>
+            {downloading ? "Downloading…" : "⬇ Download CSV"}
+          </button>
+        </div>
       </div>
       <p style={{ fontSize:13, color:"#6b7280", marginBottom:20 }}>
         One row per POC — aggregated across all campaigns. POCs with the most outreaches or follow-ups are shown first.

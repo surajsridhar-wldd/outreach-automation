@@ -54,6 +54,19 @@ export default function TrackerPage() {
 
   useEffect(() => { loadTab(tab); }, [tab, loadTab]);
 
+  // Refetch the active tab whenever the window regains focus or becomes visible —
+  // covers leaving the tab open, sending messages via another window/device, then coming back.
+  useEffect(() => {
+    function onFocus() { loadTab(tab); }
+    function onVisible() { if (document.visibilityState === "visible") loadTab(tab); }
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [tab, loadTab]);
+
   const currentRecs = records[tab] || [];
   const campaigns = [...new Set(currentRecs.map(r => r.contacts?.campaign).filter(Boolean))];
   const searchLower = search.trim().toLowerCase();
@@ -70,7 +83,12 @@ export default function TrackerPage() {
   function show(msg, type="info") { setToast({ msg, type }); setTimeout(() => setToast(null), 5000); }
   function toggle(id) { setSelected(s => { const n = new Set(s); n.has(id)?n.delete(id):n.add(id); return n; }); }
   function toggleAll() { setSelected(s => s.size===view.length?new Set():new Set(view.map(r=>r.id))); }
-  function reload() { loadTab(tab); setSelected(new Set()); }
+  function reload() {
+    // Refresh every tab's cached data, not just the active one, so badge counts
+    // and lists are accurate the instant you switch tabs after any action.
+    TABS.forEach(t => loadTab(t.id));
+    setSelected(new Set());
+  }
 
   // Load history for POC drawer
   async function openPocDrawer(rec) {
@@ -203,7 +221,10 @@ export default function TrackerPage() {
 
   return (
     <div>
-      <h1 style={{ fontSize:20, fontWeight:700, letterSpacing:"-.4px", marginBottom:20 }}>Tracker</h1>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
+        <h1 style={{ fontSize:20, fontWeight:700, letterSpacing:"-.4px" }}>Tracker</h1>
+        <button className="btn btn-sm" onClick={reload}>↻ Refresh</button>
+      </div>
 
       {/* Tabs */}
       <div className="tabs">
@@ -332,6 +353,7 @@ export default function TrackerPage() {
                           <button className="btn btn-sm" style={{background:"#ecfeff",color:"#0e7490",border:"1px solid #a5f3fc",fontSize:11}} onClick={()=>bulkMonitor([r.id])} title="Acknowledge — no action needed right now">👁</button>
                           <button className="btn btn-purple btn-sm" onClick={()=>patchOne(r.id,"resolved")}>✓</button>
                           <button className="btn btn-sm" style={{fontSize:11}} onClick={()=>setEscalateIds([r.id])}>↗</button>
+                          <button className="btn btn-sm" onClick={()=>setEditRec(r)}>✏</button>
                           <button className="btn btn-sm" style={{color:"#6b7280"}} onClick={()=>openPocDrawer(r)}>Details</button>
                         </Cell></td>
                       </tr>
@@ -517,6 +539,14 @@ export default function TrackerPage() {
                   ))}
                 </div>
               )}
+              {/* Edit details — always available, any status */}
+              <div className="drawer-section">
+                <div className="drawer-section-title">Contact Details</div>
+                <button className="btn btn-sm" onClick={()=>setEditRec(pocDrawer.rec)}>✏ Edit Name / Email / Campaign / Issue</button>
+                {!pocDrawer.rec.contacts?.email && (
+                  <p style={{fontSize:11,color:"#f97316",marginTop:6}}>No email on file — add one here to enable email outreach and follow-ups.</p>
+                )}
+              </div>
               {/* Quick actions */}
               {!["resolved","escalated"].includes(pocDrawer.rec.status)&&(
                 <div className="drawer-section">
@@ -572,7 +602,7 @@ export default function TrackerPage() {
       {drawer&&<CampaignDrawer campaign={drawer} onClose={()=>setDrawer(null)} onStatusChange={async(id,status)=>{await patchOne(id,status);setDrawer(null);}}/>}
 
       {/* Edit modal (outreach tab only) */}
-      {editRec&&<EditModal contact={editRec.contacts} onClose={()=>setEditRec(null)} onSaved={()=>loadTab("outreach")}/>}
+      {editRec&&<EditModal contact={editRec.contacts} onClose={()=>setEditRec(null)} onSaved={()=>{loadTab(tab);if(pocDrawer?.rec.id===editRec.id)openPocDrawer({...editRec});}}/>}
 
       {/* Escalate modal */}
       {escalateIds&&<EscalateModal ids={escalateIds} records={currentRecs} onClose={()=>setEscalateIds(null)} onDone={()=>{reload();loadTab("outreach");}}/>}
