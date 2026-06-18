@@ -3,9 +3,9 @@ import { db } from "@/lib/supabase";
 import { exportSheet } from "@/lib/sheets";
 
 const LABEL = {
-  pending: "Pending", sent: "Outreach Sent", awaiting_reply: "Awaiting Reply",
-  replied: "Replied", needs_review: "Needs Review", followup: "Follow-up Sent",
-  resolved_auto: "Resolved (auto)", resolved: "Resolved", no_reply: "No Reply", stalled: "Stalled",
+  pending: "Pending", sent: "Outreach Sent", active: "Active",
+  needs_review: "Needs Review", followup: "Follow-up Sent", monitoring: "Monitoring",
+  resolved: "Resolved", no_reply: "No Reply", stalled: "Stalled", escalated: "Escalated",
 };
 
 export async function GET() {

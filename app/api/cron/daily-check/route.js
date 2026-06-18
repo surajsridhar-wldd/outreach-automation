@@ -15,7 +15,7 @@ export async function GET(req) {
 
   const { data: records } = await db.from("outreach_records")
     .select("*, contacts(*)")
-    .in("status", ["sent", "awaiting_reply", "followup"]);
+    .in("status", ["sent", "active", "no_reply", "followup"]);
 
   const { data: users } = await db.from("users").select("*");
   const userById = Object.fromEntries((users || []).map((u) => [u.id, u]));
@@ -40,9 +40,13 @@ export async function GET(req) {
             await sendEmail(owner, { to: c.email, subject: "Re: " + outreachSubject(c), body: followupBody(c, owner.name, n) });
           } else {
             const sent = await sendDm(owner, rec.slack_channel_id, slackFollowup(c, n));
-            if (sent.ok) await db.from("outreach_records").update({ slack_message_ts: sent.ts }).eq("id", rec.id);
+            if (sent.ok) {
+              const { error: tsErr } = await db.from("outreach_records").update({ slack_message_ts: sent.ts }).eq("id", rec.id);
+              if (tsErr) console.error("cron: failed to update slack_message_ts:", tsErr.message);
+            }
           }
-          await db.from("outreach_records").update({ status: "followup", followups: n, last_action_at: new Date().toISOString() }).eq("id", rec.id);
+          const { error: upErr } = await db.from("outreach_records").update({ status: "followup", followups: n, last_action_at: new Date().toISOString() }).eq("id", rec.id);
+          if (upErr) { console.error("cron: failed to update followup status:", upErr.message); continue; }
           await logEvent({ outreachId: rec.id, userId: owner.id, action: "followup_sent", prevStatus: "no_reply", newStatus: "followup", payload: { n, auto: true } });
           autoFollowups++;
         } catch (e) { /* skip on error */ }

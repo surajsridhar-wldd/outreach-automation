@@ -2,9 +2,9 @@
 import { useEffect, useState } from "react";
 
 const LABEL = {
-  pending:"Pending",sent:"Sent",awaiting_reply:"Awaiting",replied:"Replied",
-  needs_review:"Review",followup:"Follow-up",resolved_auto:"Auto-Resolved",
-  resolved:"Resolved",no_reply:"No Reply",stalled:"Stalled",
+  pending:"Pending",sent:"Sent",active:"Active",
+  needs_review:"Review",followup:"Follow-up",monitoring:"Monitoring",
+  resolved:"Resolved",no_reply:"No Reply",stalled:"Stalled",escalated:"Escalated",
 };
 
 export default function Admin() {
