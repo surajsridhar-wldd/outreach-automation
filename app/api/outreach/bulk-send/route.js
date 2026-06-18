@@ -56,7 +56,8 @@ export async function POST(req) {
 
         // Cache the resolved Slack ID
         if (slackId !== c.slack_user_id) {
-          await db.from("contacts").update({ slack_user_id: slackId }).eq("id", c.id);
+          const { error: cacheErr } = await db.from("contacts").update({ slack_user_id: slackId }).eq("id", c.id);
+          if (cacheErr) console.error(`Failed to cache slack_user_id for ${c.name}:`, cacheErr.message);
         }
 
         const channelId = await openDm(user, slackId);
@@ -70,7 +71,8 @@ export async function POST(req) {
         patch.first_message_ts = sent.ts; // permanent anchor — never moves, used for DM history search
       }
 
-      await db.from("outreach_records").update(patch).eq("id", rec.id);
+      const { error: updateErr } = await db.from("outreach_records").update(patch).eq("id", rec.id);
+      if (updateErr) throw new Error(`Message sent but failed to update status: ${updateErr.message}`);
       await logEvent({
         outreachId: rec.id, userId: user.id,
         action: "sent", prevStatus: "pending", newStatus: "sent",

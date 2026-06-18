@@ -40,7 +40,8 @@ export async function PATCH(req, { params }) {
   }
   if (notes !== undefined) patch.message_notes = notes;
 
-  await db.from("outreach_records").update(patch).eq("id", rec.id);
+  const { error: upErr } = await db.from("outreach_records").update(patch).eq("id", rec.id);
+  if (upErr) return Response.json({ error: upErr.message }, { status: 500 });
   await logEvent({
     outreachId: rec.id, userId: user.id,
     action: status === "resolved" ? "resolved" : notes !== undefined ? "note_added" : "status_changed",
@@ -60,7 +61,8 @@ export async function DELETE(req, { params }) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  await db.from("outreach_records").delete().eq("id", params.id);
+  const { error: delErr } = await db.from("outreach_records").delete().eq("id", params.id);
+  if (delErr) return Response.json({ error: delErr.message }, { status: 500 });
 
   const { count } = await db.from("outreach_records")
     .select("*", { count: "exact", head: true })

@@ -18,6 +18,7 @@ export async function PATCH(req, { params }) {
   for (const k of allowed) if (body[k] !== undefined) patch[k] = body[k] || null;
   patch.updated_at = new Date().toISOString();
 
-  await db.from("contacts").update(patch).eq("id", params.id).eq("user_id", user.id);
+  const { error: upErr } = await db.from("contacts").update(patch).eq("id", params.id).eq("user_id", user.id);
+  if (upErr) return Response.json({ error: upErr.message }, { status: 500 });
   return Response.json({ ok: true });
 }

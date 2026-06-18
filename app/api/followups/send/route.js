@@ -25,7 +25,8 @@ export async function POST(req) {
       results.push({ id, ok: false, name: rec?.contacts?.name, error: "Not eligible for follow-up" }); continue;
     }
     if (rec.followups >= MAX_FOLLOWUPS) {
-      await db.from("outreach_records").update({ status: "stalled", last_action_at: new Date().toISOString() }).eq("id", id);
+      const { error: stallErr } = await db.from("outreach_records").update({ status: "stalled", last_action_at: new Date().toISOString() }).eq("id", id);
+      if (stallErr) { results.push({ id, ok: false, name: rec.contacts?.name, error: stallErr.message }); continue; }
       await logEvent({ outreachId: id, userId: user.id, action: "escalated_stalled", prevStatus: rec.status, newStatus: "stalled" });
       results.push({ id, ok: false, name: rec.contacts?.name, error: "Max follow-ups reached → marked Stalled" }); continue;
     }
@@ -71,7 +72,8 @@ export async function POST(req) {
         if (rec.channel !== "slack") patch.channel = "slack";
       }
 
-      await db.from("outreach_records").update(patch).eq("id", id);
+      const { error: upErr } = await db.from("outreach_records").update(patch).eq("id", id);
+      if (upErr) throw new Error(`Message sent but failed to update status: ${upErr.message}`);
       await logEvent({
         outreachId: id, userId: user.id, action: "followup_sent",
         prevStatus: rec.status, newStatus: "followup",

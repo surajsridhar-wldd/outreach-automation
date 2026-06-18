@@ -44,7 +44,8 @@ export async function POST(req) {
   if (newStatus === "active") patch.replied_at = rec.replied_at || now;
   if (newStatus === "no_reply") { patch.reply_classification = null; patch.reply_confidence = null; patch.message_notes = null; }
 
-  await db.from("outreach_records").update(patch).eq("id", id);
+  const { error: upErr } = await db.from("outreach_records").update(patch).eq("id", id);
+  if (upErr) return Response.json({ error: upErr.message }, { status: 500 });
   await logEvent({ outreachId: id, userId: user.id, action: "status_changed", prevStatus: rec.status, newStatus, payload: { via: "review", decision } });
   return Response.json({ ok: true });
 }

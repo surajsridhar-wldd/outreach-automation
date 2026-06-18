@@ -14,8 +14,9 @@ export async function POST(req) {
     try {
       if (action === "delete") {
         const { data: rec } = await db.from("outreach_records").select("user_id, contact_id").eq("id", id).single();
-        if (!rec || (rec.user_id !== user.id && user.role !== "admin")) { results.push({ id, ok: false }); continue; }
-        await db.from("outreach_records").delete().eq("id", id);
+        if (!rec || (rec.user_id !== user.id && user.role !== "admin")) { results.push({ id, ok: false, error: "not found or forbidden" }); continue; }
+        const { error: delErr } = await db.from("outreach_records").delete().eq("id", id);
+        if (delErr) throw new Error(delErr.message);
         const { count } = await db.from("outreach_records").select("*", { count: "exact", head: true }).eq("contact_id", rec.contact_id);
         if (count === 0) await db.from("contacts").delete().eq("id", rec.contact_id);
         results.push({ id, ok: true });
@@ -27,35 +28,39 @@ export async function POST(req) {
 
         if (action === "check_reply") {
           const r = await checkOneRecord(rec, user);
+          if (r.error) { results.push({ id, ok: false, name: rec.contacts?.name, error: r.error }); continue; }
           results.push({ id, ok: true, name: rec.contacts?.name, ...r });
 
         } else if (action === "resolve") {
-          await db.from("outreach_records").update({ status: "resolved", resolved_by: user.id, last_action_at: new Date().toISOString() }).eq("id", id);
+          const { error: upErr } = await db.from("outreach_records").update({ status: "resolved", resolved_by: user.id, last_action_at: new Date().toISOString() }).eq("id", id);
+          if (upErr) throw new Error(upErr.message);
           await logEvent({ outreachId: id, userId: user.id, action: "resolved", prevStatus: rec.status, newStatus: "resolved" });
           results.push({ id, ok: true });
 
         } else if (action === "monitor") {
-          // Acknowledged, no current action needed, will resolve in due time. No follow-ups sent while monitoring.
           const note = payload?.note || "";
-          await db.from("outreach_records").update({
+          const { error: upErr } = await db.from("outreach_records").update({
             status: "monitoring", message_notes: note || rec.message_notes, last_action_at: new Date().toISOString(),
           }).eq("id", id);
+          if (upErr) throw new Error(upErr.message);
           await logEvent({ outreachId: id, userId: user.id, action: "status_changed", prevStatus: rec.status, newStatus: "monitoring", payload: { note } });
           results.push({ id, ok: true });
 
         } else if (action === "escalate") {
           const note = payload?.note || "";
           const escalateTo = payload?.escalateTo || null;
-          await db.from("outreach_records").update({
+          const { error: upErr } = await db.from("outreach_records").update({
             status: "escalated", message_notes: note, last_action_at: new Date().toISOString(),
           }).eq("id", id);
+          if (upErr) throw new Error(upErr.message);
           await logEvent({ outreachId: id, userId: user.id, action: "status_changed", prevStatus: rec.status, newStatus: "escalated", payload: { note, escalateTo } });
           results.push({ id, ok: true });
 
         } else if (action === "set_status") {
           const newStatus = payload?.status;
           if (!newStatus) { results.push({ id, ok: false, error: "no status" }); continue; }
-          await db.from("outreach_records").update({ status: newStatus, last_action_at: new Date().toISOString() }).eq("id", id);
+          const { error: upErr } = await db.from("outreach_records").update({ status: newStatus, last_action_at: new Date().toISOString() }).eq("id", id);
+          if (upErr) throw new Error(upErr.message);
           await logEvent({ outreachId: id, userId: user.id, action: "status_changed", prevStatus: rec.status, newStatus, payload });
           results.push({ id, ok: true });
         }
