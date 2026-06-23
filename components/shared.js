@@ -11,7 +11,7 @@ export const SC = {
   needs_review: { label:"Needs Review",     color:"#92400e", bg:"#fffbeb", border:"#fde68a", dot:"#f59e0b" },
   monitoring:   { label:"Monitoring",       color:"#0e7490", bg:"#ecfeff", border:"#a5f3fc", dot:"#06b6d4" },
   resolved:     { label:"Resolved",         color:"#4c1d95", bg:"#ede9fe", border:"#c4b5fd", dot:"#7c3aed" },
-  escalated:    { label:"Escalated",        color:"#1e40af", bg:"#dbeafe", border:"#93c5fd", dot:"#2563eb" },
+  escalated:    { label:"Reassigned",       color:"#1e40af", bg:"#dbeafe", border:"#93c5fd", dot:"#2563eb" },
 };
 
 export function Badge({ status }) {
@@ -62,11 +62,11 @@ export function CampaignDrawer({ campaign, onClose, onStatusChange }) {
           {data?.stats && (
             <div style={{ display:"flex", gap:16, marginTop:16, flexWrap:"wrap" }}>
               {[
-                { label:"Total",    n:data.stats.total,    color:"#374151" },
-                { label:"Active",   n:data.stats.active,   color:"#059669" },
-                { label:"No Reply", n:data.stats.no_reply, color:"#ef4444" },
-                { label:"Resolved", n:data.stats.resolved, color:"#7c3aed" },
-                { label:"Escalated",n:data.stats.escalated,color:"#2563eb" },
+                { label:"Total",      n:data.stats.total,      color:"#374151" },
+                { label:"Active",     n:data.stats.active,     color:"#059669" },
+                { label:"No Reply",   n:data.stats.no_reply,   color:"#ef4444" },
+                { label:"Resolved",   n:data.stats.resolved,   color:"#7c3aed" },
+                { label:"Reassigned", n:data.stats.escalated,  color:"#2563eb" },
               ].map(({ label, n, color }) => (
                 <div key={label} style={{ textAlign:"center" }}>
                   <div style={{ fontSize:22, fontWeight:700, color, lineHeight:1 }}>{n}</div>
@@ -125,7 +125,7 @@ function POCCard({ rec, onStatusChange }) {
           )}
           <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
             {rec.status !== "resolved" && <button className="btn btn-xs btn-purple" onClick={() => onStatusChange(rec.id, "resolved")}>✓ Resolve</button>}
-            {rec.status !== "escalated" && <button className="btn btn-xs btn-green" onClick={() => onStatusChange(rec.id, "escalated")}>↗ Escalate</button>}
+            {rec.status !== "escalated" && <button className="btn btn-xs btn-green" onClick={() => onStatusChange(rec.id, "escalated")}>↗ Reassign</button>}
           </div>
         </div>
       )}
@@ -172,56 +172,73 @@ export function EditModal({ contact, onClose, onSaved }) {
   );
 }
 
-// ── Escalate Modal ────────────────────────────────────────────────────────────
+// ── Reassign Modal (formerly Escalate) ────────────────────────────────────────
 export function EscalateModal({ ids, records, onClose, onDone }) {
   const [note, setNote] = useState("");
   const [toName, setToName] = useState("");
   const [toEmail, setToEmail] = useState("");
-  const [createNew, setCreateNew] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null); // { ok, warning }
 
   async function submit() {
-    if (!note.trim()) return;
+    if (!note.trim() || !toName.trim()) return;
     setBusy(true);
-    await fetch("/api/outreach/bulk-update", {
+    const r = await fetch("/api/outreach/bulk-update", {
       method:"POST", headers:{"content-type":"application/json"},
-      body:JSON.stringify({ ids, action:"escalate", payload:{ note, escalateTo: toName ? { name:toName, email:toEmail } : null } }),
-    });
-    if (createNew && toName) {
-      const escalatedRecs = (records||[]).filter(r => ids.includes(r.id));
-      const csvRows = ["POC Name\tEmail\tCampaign\tIssue",
-        ...escalatedRecs.map(r => `${toName}\t${toEmail}\t${r.contacts?.campaign||""}\t${r.contacts?.issue||""}`)
-      ].join("\n");
-      await fetch("/api/contacts/import", { method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({ csvText:csvRows }) });
+      body:JSON.stringify({ ids, action:"reassign", payload:{ note, toName, toEmail } }),
+    }).then(r => r.json());
+    setBusy(false);
+
+    const warnings = (r.results || []).filter(x => x.warning).map(x => x.warning);
+    if (warnings.length) {
+      setResult({ ok: true, warning: warnings.join("; ") });
+    } else {
+      onDone(); onClose();
     }
-    setBusy(false); onDone(); onClose();
+  }
+
+  if (result) {
+    return (
+      <div className="modal-overlay">
+        <div className="modal">
+          <h3>Reassigned</h3>
+          <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:8, padding:"10px 12px", fontSize:13, color:"#92400e", marginBottom:16 }}>
+            ⚠ {result.warning}
+          </div>
+          <p style={{ fontSize:13, color:"#6b7280" }}>The original record is marked as Reassigned. The new contact record is in the Outreach tab — send manually when ready.</p>
+          <button className="btn btn-primary" style={{ width:"100%" }} onClick={() => { onDone(); onClose(); }}>Done</button>
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="modal-overlay">
       <div className="modal">
-        <h3>Escalate to Someone Else</h3>
+        <h3>Reassign to Someone Else</h3>
+        <p style={{ fontSize:13, color:"#6b7280", marginBottom:16 }}>
+          The original record will be marked <strong>Reassigned</strong>. A new outreach record will be created for the person below and a message will be sent to them automatically on the same channel.
+        </p>
         <div className="form-field">
-          <label>What needs to happen *</label>
+          <label>Why are you reassigning? *</label>
           <textarea rows={3} placeholder="e.g. Kirsten said this belongs to the finance team — they need to update the DMS entry" value={note} onChange={e => setNote(e.target.value)} style={{ resize:"vertical" }} />
         </div>
         <div className="form-field">
-          <label>Reassign to (name)</label>
+          <label>Reassign to (name) *</label>
           <input placeholder="Ravi Kumar" value={toName} onChange={e => setToName(e.target.value)} />
         </div>
         <div className="form-field">
-          <label>Their email (optional — for email outreach)</label>
+          <label>Their email (required for email outreach)</label>
           <input placeholder="ravi@corp.in" value={toEmail} onChange={e => setToEmail(e.target.value)} />
         </div>
-        {toName && (
-          <label style={{ display:"flex", alignItems:"center", gap:8, marginBottom:16, fontSize:13, cursor:"pointer" }}>
-            <input type="checkbox" style={{ width:"auto" }} checked={createNew} onChange={e => setCreateNew(e.target.checked)} />
-            Also create a new Outreach record for {toName} with the same issue
-          </label>
-        )}
+        <p style={{ fontSize:11, color:"#9ca3af", marginBottom:16 }}>
+          A message will be sent to {toName||"them"} immediately via the same channel as the original outreach (Slack or email). If Slack lookup fails, the new record is created as pending so you can send manually.
+        </p>
         <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
           <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={busy || !note.trim()} onClick={submit}>{busy?"Escalating…":"Escalate"}</button>
+          <button className="btn btn-primary" disabled={busy || !note.trim() || !toName.trim()} onClick={submit}>
+            {busy ? "Reassigning…" : "Reassign & Send →"}
+          </button>
         </div>
       </div>
     </div>

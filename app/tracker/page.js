@@ -116,7 +116,10 @@ export default function TrackerPage() {
     setImporting(false);
     if (r.error) return show("⚠ "+r.error,"error");
     setCsvText(""); setSheetUrl("");
-    show(`✅ Imported ${r.created}${r.skipped?` · ${r.skipped} skipped (already active)`:""}`);
+    const parts = [`✅ Imported ${r.created}`];
+    if (r.followup_queued) parts.push(`${r.followup_queued} queued for follow-up (same issue)`);
+    if (r.skipped) parts.push(`${r.skipped} skipped`);
+    show(parts.join(' · '));
     loadTab("outreach");
   }
 
@@ -194,7 +197,7 @@ export default function TrackerPage() {
 
   // Tab-specific selectable set
   const selCheckable  = [...selected].filter(id=>["sent","active","no_reply","followup","stalled"].includes(currentRecs.find(r=>r.id===id)?.status));
-  const selNoReply    = [...selected].filter(id=>["no_reply","stalled","followup"].includes(currentRecs.find(r=>r.id===id)?.status));
+  const selNoReply    = [...selected].filter(id=>["active","no_reply","stalled","followup"].includes(currentRecs.find(r=>r.id===id)?.status));
   const selPending    = [...selected].filter(id=>currentRecs.find(r=>r.id===id)?.status==="pending");
   const selResolvable = [...selected].filter(id=>!["resolved","escalated"].includes(currentRecs.find(r=>r.id===id)?.status));
 
@@ -210,7 +213,7 @@ export default function TrackerPage() {
     created:"Created", sent:"Outreach sent", reply_checked:"Checked for reply",
     reply_classified:"Reply detected", followup_sent:"Follow-up sent",
     resolved:"Resolved", status_changed:"Status updated", note_added:"Note added",
-    escalated_stalled:"Escalated (stalled)",
+    escalated_stalled:"Reassigned (stalled)",
   };
 
   const TIMELINE_COLORS = {
@@ -313,6 +316,23 @@ export default function TrackerPage() {
       {/* ── IN FLIGHT TAB ── */}
       {tab==="inflight" && (
         <>
+          {/* Button legend */}
+          <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"center",marginBottom:12,padding:"8px 12px",background:"#f8f9fb",border:"1px solid #e5e7eb",borderRadius:8,fontSize:12,color:"#6b7280"}}>
+            <span style={{fontWeight:600,color:"#374151",marginRight:4}}>Buttons:</span>
+            <span title="Check if the POC has replied">🔍 Check Reply</span>
+            <span style={{color:"#d1d5db"}}>·</span>
+            <span title="Send a follow-up message (available for active, no reply, follow-up, stalled)">🔁 Follow-up</span>
+            <span style={{color:"#d1d5db"}}>·</span>
+            <span title="Move to Monitoring — no auto follow-ups sent">👁 Monitor</span>
+            <span style={{color:"#d1d5db"}}>·</span>
+            <span title="Mark as resolved / closed">✓ Resolve</span>
+            <span style={{color:"#d1d5db"}}>·</span>
+            <span title="Reassign this issue to a different person — sends them a message automatically">↗ Reassign</span>
+            <span style={{color:"#d1d5db"}}>·</span>
+            <span title="Edit contact details (name, email, issue, campaign)">✏ Edit</span>
+            <span style={{color:"#d1d5db"}}>·</span>
+            <span title="Open full POC details and timeline">Details</span>
+          </div>
           <FilterBar campaigns={campaigns} statusOptions={["sent","active","no_reply","followup","stalled"]}
             filterCampaign={filterCampaign} setFilterCampaign={setFilterCampaign}
             filterStatus={filterStatus} setFilterStatus={setFilterStatus}
@@ -323,7 +343,7 @@ export default function TrackerPage() {
             {selNoReply.length>0 && <button className="btn btn-orange btn-sm" disabled={busy.fu} onClick={()=>setFollowupChannelIds(selNoReply)}>🔁 Follow-up ({selNoReply.length})</button>}
             {selResolvable.length>0 && <button className="btn btn-sm" style={{background:"#ecfeff",color:"#0e7490",border:"1px solid #a5f3fc"}} onClick={()=>bulkMonitor([...selected])}>👁 Monitor</button>}
             {selResolvable.length>0 && <button className="btn btn-purple btn-sm" onClick={()=>bulkResolve([...selected])}>✓ Resolve ({selResolvable.length})</button>}
-            {selected.size>0 && <button className="btn btn-sm" style={{background:"rgba(255,255,255,.1)",color:"rgba(255,255,255,.8)",border:"1px solid rgba(255,255,255,.2)",marginLeft:"auto"}} onClick={()=>setEscalateIds([...selected])}>↗ Escalate</button>}
+            {selected.size>0 && <button className="btn btn-sm" style={{background:"rgba(255,255,255,.1)",color:"rgba(255,255,255,.8)",border:"1px solid rgba(255,255,255,.2)",marginLeft:"auto"}} onClick={()=>setEscalateIds([...selected])}>↗ Reassign</button>}
           </BulkBar>
 
           {view.length===0 ? (
@@ -348,11 +368,11 @@ export default function TrackerPage() {
                         <td><Cell><DaysChip d={days(r.reached_out_at)}/></Cell></td>
                         <td><Cell><span style={{fontSize:12,fontWeight:600,color:r.followups>0?"#d97706":"#9ca3af"}}>{r.followups||0}</span></Cell></td>
                         <td><Cell gap>
-                          {["sent","active","no_reply","followup","stalled"].includes(r.status)&&<button className="btn btn-green btn-sm" disabled={checking} onClick={()=>checkReplies([r.id])}>{checking?"…":"🔍"}</button>}
-                          {["no_reply","stalled","followup"].includes(r.status)&&<button className="btn btn-orange btn-sm" disabled={busy.fu} onClick={()=>setFollowupChannelIds([r.id])}>🔁</button>}
+                          {["sent","active","no_reply","followup","stalled"].includes(r.status)&&<button className="btn btn-green btn-sm" disabled={checking} onClick={()=>checkReplies([r.id])} title="Check for reply">{checking?"…":"🔍"}</button>}
+                          {["active","no_reply","stalled","followup"].includes(r.status)&&<button className="btn btn-orange btn-sm" disabled={busy.fu} onClick={()=>setFollowupChannelIds([r.id])} title="Send follow-up">🔁</button>}
                           <button className="btn btn-sm" style={{background:"#ecfeff",color:"#0e7490",border:"1px solid #a5f3fc",fontSize:11}} onClick={()=>bulkMonitor([r.id])} title="Acknowledge — no action needed right now">👁</button>
-                          <button className="btn btn-purple btn-sm" onClick={()=>patchOne(r.id,"resolved")}>✓</button>
-                          <button className="btn btn-sm" style={{fontSize:11}} onClick={()=>setEscalateIds([r.id])}>↗</button>
+                          <button className="btn btn-purple btn-sm" onClick={()=>patchOne(r.id,"resolved")} title="Mark resolved">✓</button>
+                          <button className="btn btn-sm" style={{fontSize:11}} onClick={()=>setEscalateIds([r.id])} title="Reassign to someone else">↗</button>
                           <button className="btn btn-sm" onClick={()=>setEditRec(r)}>✏</button>
                           <button className="btn btn-sm" style={{color:"#6b7280"}} onClick={()=>openPocDrawer(r)}>Details</button>
                         </Cell></td>
@@ -432,7 +452,7 @@ export default function TrackerPage() {
           {selected.size>0 && (
             <div style={{display:"flex",gap:8,marginBottom:12}}>
               <button className="btn btn-purple btn-sm" onClick={()=>bulkResolve([...selected])}>✓ Resolve selected</button>
-              <button className="btn btn-sm" onClick={()=>setEscalateIds([...selected])}>↗ Escalate selected</button>
+              <button className="btn btn-sm" onClick={()=>setEscalateIds([...selected])}>↗ Reassign selected</button>
             </div>
           )}
           {view.length===0 ? (
@@ -451,7 +471,7 @@ export default function TrackerPage() {
                       <td><Cell><span style={{fontSize:12,color:"#9ca3af"}}>{r.last_action_at?new Date(r.last_action_at).toLocaleDateString():"—"}</span></Cell></td>
                       <td><Cell gap>
                         <button className="btn btn-purple btn-sm" onClick={()=>bulkResolve([r.id])}>✓</button>
-                        <button className="btn btn-sm" onClick={()=>setEscalateIds([r.id])}>↗</button>
+                        <button className="btn btn-sm" onClick={()=>setEscalateIds([r.id])} title="Reassign to someone else">↗</button>
                         <button className="btn btn-sm" onClick={()=>openPocDrawer(r)}>Details</button>
                       </Cell></td>
                     </tr>
@@ -555,12 +575,12 @@ export default function TrackerPage() {
                     {["sent","active","no_reply","followup","stalled"].includes(pocDrawer.rec.status)&&(
                       <button className="btn btn-green btn-sm" disabled={checkingIds.has(pocDrawer.rec.id)} onClick={()=>checkReplies([pocDrawer.rec.id])}>🔍 Check Reply</button>
                     )}
-                    {["no_reply","stalled","followup"].includes(pocDrawer.rec.status)&&(
+                    {["active","no_reply","stalled","followup"].includes(pocDrawer.rec.status)&&(
                       <button className="btn btn-orange btn-sm" onClick={()=>{setFollowupChannelIds([pocDrawer.rec.id]);setPocDrawer(null);}}>🔁 Follow-up</button>
                     )}
                     <button className="btn btn-purple btn-sm" onClick={()=>patchOne(pocDrawer.rec.id,"resolved")}>✓ Resolve</button>
                     <button className="btn btn-sm" style={{background:"#ecfeff",color:"#0e7490",border:"1px solid #a5f3fc"}} onClick={()=>bulkMonitor([pocDrawer.rec.id])}>👁 Monitor</button>
-                    <button className="btn btn-sm" onClick={()=>{setEscalateIds([pocDrawer.rec.id]);setPocDrawer(null);}}>↗ Escalate</button>
+                    <button className="btn btn-sm" onClick={()=>{setEscalateIds([pocDrawer.rec.id]);setPocDrawer(null);}}>↗ Reassign</button>
                   </div>
                 </div>
               )}
@@ -604,7 +624,7 @@ export default function TrackerPage() {
       {/* Edit modal (outreach tab only) */}
       {editRec&&<EditModal contact={editRec.contacts} onClose={()=>setEditRec(null)} onSaved={()=>{loadTab(tab);if(pocDrawer?.rec.id===editRec.id)openPocDrawer({...editRec});}}/>}
 
-      {/* Escalate modal */}
+      {/* Reassign modal */}
       {escalateIds&&<EscalateModal ids={escalateIds} records={currentRecs} onClose={()=>setEscalateIds(null)} onDone={()=>{reload();loadTab("outreach");}}/>}
 
       {/* Follow-up channel picker */}

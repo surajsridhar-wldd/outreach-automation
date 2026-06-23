@@ -52,6 +52,11 @@ function parseCsvText(text) {
   return rows;
 }
 
+// Normalise issue text for comparison — lowercase, collapse whitespace
+function normalizeIssue(s) {
+  return (s || "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
 export async function POST(req) {
   const user = await requireUser();
   if (!user) return unauthorized();
@@ -69,46 +74,82 @@ export async function POST(req) {
   const rows = normalizeRows(values);
   if (!rows.length) return Response.json({ error: "No data rows found" }, { status: 400 });
 
-  let created = 0, skipped = 0, refreshed = 0;
+  let created = 0, skipped = 0, refreshed = 0, followup_queued = 0;
 
   for (const r of rows) {
+    // Find all contacts for this user + name + campaign (may have multiple rows = multiple outreach records)
     const { data: existing } = await db.from("contacts")
-      .select("id, outreach_records(id, status)")
+      .select("id, issue, outreach_records(id, status)")
       .eq("user_id", user.id)
       .eq("campaign", r.campaign || "")
-      .ilike("name", r.name)
-      .maybeSingle();
+      .ilike("name", r.name);
 
-    if (existing) {
-      const outreaches = existing.outreach_records || [];
-      const activeOne = outreaches.find(o => ["sent","active","no_reply","followup","stalled","needs_review"].includes(o.status));
-      const monitoringOne = outreaches.find(o => o.status === "monitoring");
+    if (existing && existing.length > 0) {
+      const monitoringRec = existing
+        .flatMap(c => (c.outreach_records || []).map(o => ({ ...o, issue: c.issue })))
+        .find(o => o.status === "monitoring");
 
-      if (activeOne) {
-        // Already being actively worked — don't duplicate, don't touch
-        skipped++; continue;
-      }
-      if (monitoringOne) {
-        // Recurring known issue — refresh "last seen" timestamp, keep status as monitoring, don't duplicate
-        await db.from("outreach_records").update({ last_action_at: new Date().toISOString() }).eq("id", monitoringOne.id);
-        await logEvent({ outreachId: monitoringOne.id, userId: user.id, action: "note_added", payload: { note: "Re-appeared in latest import — still monitoring" } });
+      if (monitoringRec) {
+        // Recurring known issue — refresh "last seen" timestamp
+        await db.from("outreach_records").update({ last_action_at: new Date().toISOString() }).eq("id", monitoringRec.id);
+        await logEvent({ outreachId: monitoringRec.id, userId: user.id, action: "note_added", payload: { note: "Re-appeared in latest import — still monitoring" } });
         refreshed++; continue;
       }
-      // else: only resolved/escalated exist for this person+campaign → treat as a fresh new issue, fall through to create
+
+      // Check if there's an active outreach for the same issue (same text → queue follow-up)
+      const incomingIssue = normalizeIssue(r.issue);
+      const sameIssueActiveRec = existing
+        .flatMap(c => (c.outreach_records || []).map(o => ({ ...o, contactIssue: c.issue })))
+        .find(o =>
+          ["sent","active","no_reply","followup","stalled","needs_review"].includes(o.status) &&
+          normalizeIssue(o.contactIssue) === incomingIssue
+        );
+
+      if (sameIssueActiveRec) {
+        // Same person, same campaign, same issue → queue a follow-up on the existing record
+        const { error: fuErr } = await db.from("outreach_records").update({
+          status: "no_reply",
+          last_action_at: new Date().toISOString(),
+          message_notes: (sameIssueActiveRec.message_notes ? sameIssueActiveRec.message_notes + "; " : "") + "Re-appeared in import — follow-up queued",
+        }).eq("id", sameIssueActiveRec.id);
+        if (!fuErr) {
+          await logEvent({ outreachId: sameIssueActiveRec.id, userId: user.id, action: "note_added", payload: { note: "Re-appeared in import — same issue, follow-up queued" } });
+          followup_queued++;
+        }
+        continue;
+      }
+
+      // Check if there is ANY active outreach for a DIFFERENT issue (same person, same campaign, different issue → new record)
+      const differentIssueActive = existing
+        .flatMap(c => (c.outreach_records || []).map(o => ({ ...o, contactIssue: c.issue })))
+        .find(o =>
+          ["sent","active","no_reply","followup","stalled","needs_review"].includes(o.status) &&
+          normalizeIssue(o.contactIssue) !== incomingIssue
+        );
+
+      if (differentIssueActive) {
+        // Different issue → fall through to create a new record (don't skip!)
+        // (no continue here)
+      } else {
+        // Only resolved/escalated exist for this person+campaign → treat as fresh, fall through
+      }
     }
 
-    const { data: contact } = await db.from("contacts").insert({
+    // Create new contact + outreach record
+    const { data: contact, error: cErr } = await db.from("contacts").insert({
       user_id: user.id, name: r.name,
       email: r.email || null, campaign: r.campaign || null, issue: r.issue, source,
     }).select("id").single();
+    if (cErr) { console.error("import: failed to insert contact:", cErr.message); skipped++; continue; }
 
-    const { data: outreach } = await db.from("outreach_records").insert({
+    const { data: outreach, error: oErr } = await db.from("outreach_records").insert({
       contact_id: contact.id, user_id: user.id, status: "pending",
     }).select("id").single();
+    if (oErr) { console.error("import: failed to insert outreach_record:", oErr.message); skipped++; continue; }
 
     await logEvent({ outreachId: outreach.id, userId: user.id, action: "created", newStatus: "pending" });
     created++;
   }
 
-  return Response.json({ ok: true, created, skipped, refreshed });
+  return Response.json({ ok: true, created, skipped, refreshed, followup_queued });
 }
