@@ -21,7 +21,7 @@ export async function POST(req) {
     const { data: rec } = await db.from("outreach_records")
       .select("*, contacts(*)").eq("id", id).eq("user_id", user.id).single();
 
-    if (!rec || !["no_reply", "stalled", "sent", "followup"].includes(rec.status)) {
+    if (!rec || !["active", "no_reply", "stalled", "sent", "followup"].includes(rec.status)) {
       results.push({ id, ok: false, name: rec?.contacts?.name, error: "Not eligible for follow-up" }); continue;
     }
     if (rec.followups >= MAX_FOLLOWUPS) {
