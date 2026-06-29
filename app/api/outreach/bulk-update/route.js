@@ -40,13 +40,22 @@ export async function POST(req) {
           await logEvent({ outreachId: id, userId: user.id, action: "resolved", prevStatus: rec.status, newStatus: "resolved" });
           results.push({ id, ok: true });
 
-        } else if (action === "monitor") {
+        } else if (action === "snooze" || action === "monitor") {
+          // 'monitor' kept as alias for backward compat. Snooze hides the record until
+          // snoozed_until, then the cron resurfaces it. days defaults to 7; 0/null = far future.
           const note = payload?.note || "";
+          const days = payload?.days;
+          const until = (days === null || days === undefined)
+            ? new Date(Date.now() + 7 * 86400000).toISOString()
+            : (days === 0
+                ? new Date(Date.now() + 3650 * 86400000).toISOString()  // "indefinite" preset
+                : new Date(Date.now() + Number(days) * 86400000).toISOString());
           const { error: upErr } = await db.from("outreach_records").update({
-            status: "monitoring", message_notes: note || rec.message_notes, last_action_at: new Date().toISOString(),
+            status: "snoozed", snoozed_until: until,
+            message_notes: note || rec.message_notes, last_action_at: new Date().toISOString(),
           }).eq("id", id);
           if (upErr) throw new Error(upErr.message);
-          await logEvent({ outreachId: id, userId: user.id, action: "status_changed", prevStatus: rec.status, newStatus: "monitoring", payload: { note } });
+          await logEvent({ outreachId: id, userId: user.id, action: "snoozed", prevStatus: rec.status, newStatus: "snoozed", payload: { note, days, until } });
           results.push({ id, ok: true });
 
         } else if (action === "reassign") {

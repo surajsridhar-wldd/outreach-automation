@@ -4,7 +4,7 @@ import { exportSheet } from "@/lib/sheets";
 
 const LABEL = {
   pending: "Pending", sent: "Outreach Sent", active: "Active",
-  needs_review: "Needs Review", followup: "Follow-up Sent", monitoring: "Monitoring",
+  needs_review: "Needs Review", followup: "Follow-up Sent", snoozed: "Snoozed",
   resolved: "Resolved", no_reply: "No Reply", stalled: "Stalled", escalated: "Escalated",
 };
 

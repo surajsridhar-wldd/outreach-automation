@@ -103,5 +103,33 @@ export async function GET(req) {
     });
   }
 
-  return Response.json({ stats, userMap });
+  // ── Per-category aggregation (§5) ─────────────────────────────────────────
+  const catMap = {};
+  for (const r of (records || [])) {
+    const cat = r.category || "UNTAGGED";
+    if (!catMap[cat]) catMap[cat] = { category: cat, total: 0, replied: 0, resolved: 0, open: 0, response_times_hours: [] };
+    const cm = catMap[cat];
+    cm.total++;
+    if (r.replied_at) {
+      cm.replied++;
+      if (r.reached_out_at) {
+        const hrs = (new Date(r.replied_at) - new Date(r.reached_out_at)) / 3600000;
+        if (hrs > 0) cm.response_times_hours.push(hrs);
+      }
+    }
+    if (r.status === "resolved") cm.resolved++;
+    else if (!["escalated"].includes(r.status)) cm.open++;
+  }
+  const byCategory = Object.values(catMap).map(cm => ({
+    category: cm.category,
+    total: cm.total,
+    open: cm.open,
+    resolved: cm.resolved,
+    reply_rate_pct: cm.total > 0 ? Math.round((cm.replied / cm.total) * 100) : 0,
+    avg_response_hours: cm.response_times_hours.length
+      ? Math.round(cm.response_times_hours.reduce((a, b) => a + b, 0) / cm.response_times_hours.length * 10) / 10
+      : null,
+  })).sort((a, b) => b.total - a.total);
+
+  return Response.json({ stats, userMap, byCategory });
 }

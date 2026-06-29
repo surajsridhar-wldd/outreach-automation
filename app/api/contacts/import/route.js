@@ -1,6 +1,15 @@
 import { requireUser, unauthorized } from "@/lib/session";
 import { db, logEvent } from "@/lib/supabase";
 import { readSheet } from "@/lib/sheets";
+import { sameCampaign, sameName, issueSamenessFast } from "@/lib/matching";
+import { judgeIssueSamenessBatch } from "@/lib/claude";
+
+// IMPORT — instant and cheap:
+//   • Dedup against in-flight uses FREE token matching (no AI) for clear cases.
+//   • Only genuinely ambiguous issue-sameness pairs go through ONE batched Claude
+//     call at the end (not per-row).
+//   • Category tagging is deferred to /api/tag-pending (browser-triggered after
+//     import, batched), with the cron as backstop. Keeps AI cost flat & import fast.
 
 function normalizeRows(values) {
   if (!values || values.length < 2) return [];
@@ -52,10 +61,7 @@ function parseCsvText(text) {
   return rows;
 }
 
-// Normalise issue text for comparison — lowercase, collapse whitespace
-function normalizeIssue(s) {
-  return (s || "").toLowerCase().replace(/\s+/g, " ").trim();
-}
+const OPEN_STATUSES = ["sent", "active", "no_reply", "followup", "stalled", "needs_review"];
 
 export async function POST(req) {
   const user = await requireUser();
@@ -74,82 +80,106 @@ export async function POST(req) {
   const rows = normalizeRows(values);
   if (!rows.length) return Response.json({ error: "No data rows found" }, { status: 400 });
 
-  let created = 0, skipped = 0, refreshed = 0, followup_queued = 0;
+  const { data: allContacts } = await db.from("contacts")
+    .select("id, name, email, campaign, issue, outreach_records(id, status, message_notes, snoozed_until)")
+    .eq("user_id", user.id);
+  const contacts = allContacts || [];
 
+  // PASS 1 (no AI): free token matching.
+  const decisions = [];
   for (const r of rows) {
-    // Find all contacts for this user + name + campaign (may have multiple rows = multiple outreach records)
-    const { data: existing } = await db.from("contacts")
-      .select("id, issue, outreach_records(id, status)")
-      .eq("user_id", user.id)
-      .eq("campaign", r.campaign || "")
-      .ilike("name", r.name);
+    const pcContacts = contacts.filter(
+      c => sameName(c.name, r.name) && sameCampaign(c.campaign || "", r.campaign || "")
+    );
+    const recs = pcContacts.flatMap(c =>
+      (c.outreach_records || []).map(o => ({ ...o, contactIssue: c.issue, contactId: c.id }))
+    );
 
-    if (existing && existing.length > 0) {
-      const monitoringRec = existing
-        .flatMap(c => (c.outreach_records || []).map(o => ({ ...o, issue: c.issue })))
-        .find(o => o.status === "monitoring");
+    const snoozedRec = recs.find(o => o.status === "snoozed");
+    if (snoozedRec) { decisions.push({ row: r, kind: "refresh", rec: snoozedRec }); continue; }
 
-      if (monitoringRec) {
-        // Recurring known issue — refresh "last seen" timestamp
-        await db.from("outreach_records").update({ last_action_at: new Date().toISOString() }).eq("id", monitoringRec.id);
-        await logEvent({ outreachId: monitoringRec.id, userId: user.id, action: "note_added", payload: { note: "Re-appeared in latest import — still monitoring" } });
-        refreshed++; continue;
-      }
-
-      // Check if there's an active outreach for the same issue (same text → queue follow-up)
-      const incomingIssue = normalizeIssue(r.issue);
-      const sameIssueActiveRec = existing
-        .flatMap(c => (c.outreach_records || []).map(o => ({ ...o, contactIssue: c.issue })))
-        .find(o =>
-          ["sent","active","no_reply","followup","stalled","needs_review"].includes(o.status) &&
-          normalizeIssue(o.contactIssue) === incomingIssue
-        );
-
-      if (sameIssueActiveRec) {
-        // Same person, same campaign, same issue → queue a follow-up on the existing record
-        const { error: fuErr } = await db.from("outreach_records").update({
-          status: "no_reply",
-          last_action_at: new Date().toISOString(),
-          message_notes: (sameIssueActiveRec.message_notes ? sameIssueActiveRec.message_notes + "; " : "") + "Re-appeared in import — follow-up queued",
-        }).eq("id", sameIssueActiveRec.id);
-        if (!fuErr) {
-          await logEvent({ outreachId: sameIssueActiveRec.id, userId: user.id, action: "note_added", payload: { note: "Re-appeared in import — same issue, follow-up queued" } });
-          followup_queued++;
-        }
-        continue;
-      }
-
-      // Check if there is ANY active outreach for a DIFFERENT issue (same person, same campaign, different issue → new record)
-      const differentIssueActive = existing
-        .flatMap(c => (c.outreach_records || []).map(o => ({ ...o, contactIssue: c.issue })))
-        .find(o =>
-          ["sent","active","no_reply","followup","stalled","needs_review"].includes(o.status) &&
-          normalizeIssue(o.contactIssue) !== incomingIssue
-        );
-
-      if (differentIssueActive) {
-        // Different issue → fall through to create a new record (don't skip!)
-        // (no continue here)
-      } else {
-        // Only resolved/escalated exist for this person+campaign → treat as fresh, fall through
-      }
+    const openRecs = recs.filter(o => OPEN_STATUSES.includes(o.status));
+    let decided = null;
+    const ambigRecs = [];
+    for (const o of openRecs) {
+      const verdict = issueSamenessFast(r.issue, o.contactIssue);
+      if (verdict === "same") { decided = { kind: "followup", rec: o }; break; }
+      if (verdict === "ambiguous") ambigRecs.push(o);
     }
+    if (decided) { decisions.push({ row: r, ...decided }); continue; }
+    if (ambigRecs.length) { decisions.push({ row: r, kind: "ambiguous", ambigRecs }); continue; }
+    decisions.push({ row: r, kind: "create" });
+  }
 
-    // Create new contact + outreach record
+  // PASS 2 (one batched AI call): resolve ambiguous pairs.
+  const ambiguousDecisions = decisions.filter(d => d.kind === "ambiguous");
+  if (ambiguousDecisions.length) {
+    const pairs = [];
+    ambiguousDecisions.forEach((d, di) => {
+      d.ambigRecs.forEach((o, oi) => {
+        pairs.push({ id: `${di}:${oi}`, a: d.row.issue, b: o.contactIssue, campaign: d.row.campaign });
+      });
+    });
+    let verdicts = {};
+    try { verdicts = await judgeIssueSamenessBatch({ pairs }); }
+    catch (e) { console.error("batch sameness failed:", e.message); }
+
+    ambiguousDecisions.forEach((d, di) => {
+      let matchedRec = null;
+      d.ambigRecs.forEach((o, oi) => {
+        const v = verdicts[`${di}:${oi}`];
+        if (!matchedRec && v && v.same && v.confidence >= 0.6) matchedRec = o;
+      });
+      if (matchedRec) { d.kind = "followup"; d.rec = matchedRec; }
+      else { d.kind = "create"; }
+    });
+  }
+
+  // APPLY
+  let created = 0, skipped = 0, refreshed = 0, followup_queued = 0;
+  const now = () => new Date().toISOString();
+
+  for (const d of decisions) {
+    if (d.kind === "refresh") {
+      await db.from("outreach_records").update({ last_action_at: now() }).eq("id", d.rec.id);
+      await logEvent({ outreachId: d.rec.id, userId: user.id, action: "note_added", payload: { note: "Re-appeared in import — still snoozed" } });
+      refreshed++; continue;
+    }
+    if (d.kind === "followup") {
+      const { error: fuErr } = await db.from("outreach_records").update({
+        status: "no_reply", last_action_at: now(),
+        message_notes: (d.rec.message_notes ? d.rec.message_notes + "; " : "") + "Re-appeared in import — follow-up queued",
+      }).eq("id", d.rec.id);
+      if (!fuErr) {
+        await logEvent({ outreachId: d.rec.id, userId: user.id, action: "note_added", payload: { note: "Re-appeared in import — same issue, follow-up queued" } });
+        followup_queued++;
+      }
+      continue;
+    }
+    const r = d.row;
     const { data: contact, error: cErr } = await db.from("contacts").insert({
-      user_id: user.id, name: r.name,
-      email: r.email || null, campaign: r.campaign || null, issue: r.issue, source,
+      user_id: user.id, name: r.name, email: r.email || null,
+      campaign: r.campaign || null, issue: r.issue, source,
     }).select("id").single();
-    if (cErr) { console.error("import: failed to insert contact:", cErr.message); skipped++; continue; }
+    if (cErr) { console.error("import: contact insert failed:", cErr.message); skipped++; continue; }
 
     const { data: outreach, error: oErr } = await db.from("outreach_records").insert({
       contact_id: contact.id, user_id: user.id, status: "pending",
     }).select("id").single();
-    if (oErr) { console.error("import: failed to insert outreach_record:", oErr.message); skipped++; continue; }
+    if (oErr) { console.error("import: outreach insert failed:", oErr.message); skipped++; continue; }
 
     await logEvent({ outreachId: outreach.id, userId: user.id, action: "created", newStatus: "pending" });
     created++;
+    contacts.push({ id: contact.id, name: r.name, email: r.email, campaign: r.campaign, issue: r.issue,
+      outreach_records: [{ id: outreach.id, status: "pending", message_notes: null }] });
   }
 
-  return Response.json({ ok: true, created, skipped, refreshed, followup_queued });
+  const { count: untaggedCount } = await db.from("outreach_records")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", user.id)
+    .eq("status", "pending")
+    .is("category", null)
+    .is("category_confidence", null);
+
+  return Response.json({ ok: true, created, skipped, refreshed, followup_queued, untaggedCount: untaggedCount || 0 });
 }

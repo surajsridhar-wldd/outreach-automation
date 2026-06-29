@@ -6,7 +6,7 @@ const TABS = [
   { id:"outreach",   label:"Outreach",   statuses:["pending"],                          help:"Imported but not yet sent." },
   { id:"inflight",   label:"In Flight",  statuses:["sent","active","no_reply","followup","stalled"], help:"Sent. Waiting for reply or follow-up." },
   { id:"review",     label:"Review",     statuses:["needs_review"],                     help:"System found a reply but isn't sure it's related. You decide." },
-  { id:"monitoring", label:"Monitoring", statuses:["monitoring"],                       help:"Acknowledged — no action needed right now, will resolve in due time. No follow-ups sent. Re-imports of the same issue just refresh the date, no duplicates." },
+  { id:"monitoring", label:"Snoozed", statuses:["monitoring","snoozed"],                       help:"Snoozed — hidden from In Flight until the snooze expires, then auto-resurfaced for follow-up. No follow-ups sent while snoozed. Re-imports of the same issue just refresh the date." },
   { id:"resolved",   label:"Resolved",   statuses:["resolved","escalated"],             help:"Closed out — either resolved by you or handed off." },
 ];
 
@@ -43,6 +43,7 @@ export default function TrackerPage() {
   const [filterCampaign, setFilterCampaign] = useState("");
   const [search, setSearch] = useState("");
   const [followupChannelIds, setFollowupChannelIds] = useState(null); // ids pending channel choice for follow-up
+  const [tagging, setTagging]       = useState(null);       // null | 'running' | 'done'  — categorization marker
   const [filterStatus, setFilterStatus] = useState("");
 
   const loadTab = useCallback(async (t) => {
@@ -121,6 +122,27 @@ export default function TrackerPage() {
     if (r.skipped) parts.push(`${r.skipped} skipped`);
     show(parts.join(' · '));
     loadTab("outreach");
+    // Browser-triggered batched categorization. The marker waits on this before send.
+    if (r.untaggedCount > 0) runTagging();
+  }
+
+  async function runTagging() {
+    setTagging("running");
+    try {
+      // Loop in case there are more than one batch-run worth of records.
+      let guard = 0;
+      while (guard++ < 10) {
+        const res = await fetch("/api/tag-pending",{method:"POST",headers:{"content-type":"application/json"},body:"{}"}).then(r=>r.json());
+        if (!res || res.error) break;
+        if ((res.untaggedCount || 0) === 0) break;
+      }
+      setTagging("done");
+      loadTab("outreach");
+      // Clear the "done" marker after a short while.
+      setTimeout(() => setTagging(null), 6000);
+    } catch {
+      setTagging(null);
+    }
   }
 
   async function bulkSend() {
@@ -275,6 +297,19 @@ export default function TrackerPage() {
             </button>
           </div>
 
+          {/* Categorization marker — wait for ✓ checked before sending */}
+          {tagging==="running" && (
+            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16, padding:"10px 14px", background:"#fffbeb", border:"1px solid #fde68a", borderRadius:8, fontSize:13, color:"#92400e" }}>
+              <span className="spinner" style={{ width:14, height:14, border:"2px solid #fcd34d", borderTopColor:"transparent", borderRadius:"50%", display:"inline-block", animation:"spin 0.7s linear infinite" }} />
+              Categorizing imported records with Claude… please wait before sending so every record is checked against your in-flight list.
+            </div>
+          )}
+          {tagging==="done" && (
+            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16, padding:"10px 14px", background:"#ecfdf5", border:"1px solid #a7f3d0", borderRadius:8, fontSize:13, color:"#065f46" }}>
+              ✓ All imported records categorized and checked — safe to send.
+            </div>
+          )}
+
           {view.length===0 ? (
             <div className="empty"><div className="empty-icon">📋</div><h3>No pending outreach</h3><p>Import a table above. Once sent, records move to In Flight automatically.</p></div>
           ) : (
@@ -285,7 +320,7 @@ export default function TrackerPage() {
                   <button className={`ch-btn ${channel==="slack"?"active":""}`} onClick={()=>setChannel("slack")}>💬 Slack</button>
                   <button className={`ch-btn ${channel==="email"?"active":""}`} onClick={()=>setChannel("email")}>📧 Email</button>
                 </div>
-                {selPending.length>0 && <button className="btn btn-primary btn-sm" disabled={busy.send} onClick={bulkSend}>{busy.send?"Sending…":`Send ${selPending.length}`}</button>}
+                {selPending.length>0 && <button className="btn btn-primary btn-sm" disabled={busy.send||tagging==="running"} onClick={bulkSend} title={tagging==="running"?"Wait for categorization to finish":""}>{busy.send?"Sending…":tagging==="running"?"Checking…":`Send ${selPending.length}`}</button>}
                 <button className="btn btn-red btn-sm" style={{ marginLeft:"auto" }} onClick={()=>bulkDelete([...selected])}>🗑 Delete</button>
               </BulkBar>
               <div className="tbl-wrap">

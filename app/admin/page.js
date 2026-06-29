@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 
 const LABEL = {
   pending:"Pending",sent:"Sent",active:"Active",
-  needs_review:"Review",followup:"Follow-up",monitoring:"Monitoring",
+  needs_review:"Review",followup:"Follow-up",snoozed:"Snoozed",
   resolved:"Resolved",no_reply:"No Reply",stalled:"Stalled",escalated:"Escalated",
 };
 
