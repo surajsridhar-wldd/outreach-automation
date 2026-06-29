@@ -24,6 +24,9 @@ ALTER TABLE outreach_records ADD COLUMN IF NOT EXISTS category text;
 ALTER TABLE outreach_records ADD COLUMN IF NOT EXISTS category_confidence numeric;
 ALTER TABLE outreach_records ADD COLUMN IF NOT EXISTS snoozed_until timestamptz;
 ALTER TABLE outreach_records ADD COLUMN IF NOT EXISTS batch_id uuid;
+-- backfill_checked: transient marker so the one-time attribution backfill can loop
+-- without re-processing the same record. Safe to leave; reset to NULL to re-run.
+ALTER TABLE outreach_records ADD COLUMN IF NOT EXISTS backfill_checked boolean;
 
 -- 3. Status constraint: add 'snoozed'. Keep 'monitoring' so existing rows stay valid
 --    during migration; we migrate monitoring -> snoozed in code/below, then it's unused.

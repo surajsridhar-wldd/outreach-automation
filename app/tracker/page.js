@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
-import { Badge, DaysChip, days, SC, CampaignDrawer, EditModal, EscalateModal, BulkBar, SendProgressModal } from "@/components/shared";
+import { Badge, DaysChip, days, SC, CampaignDrawer, EditModal, EscalateModal, BulkBar, SendProgressModal, ReconcileModal, SnoozeModal, RowMenu } from "@/components/shared";
 
 const TABS = [
   { id:"outreach",   label:"Outreach",   statuses:["pending"],                          help:"Imported but not yet sent." },
@@ -45,6 +45,9 @@ export default function TrackerPage() {
   const [followupChannelIds, setFollowupChannelIds] = useState(null); // ids pending channel choice for follow-up
   const [tagging, setTagging]       = useState(null);       // null | 'running' | 'done'  — categorization marker
   const [filterStatus, setFilterStatus] = useState("");
+  const [showReconcile, setShowReconcile] = useState(false);
+  const [snoozeIds, setSnoozeIds]   = useState(null);
+  const [categories, setCategories] = useState([]);
 
   const loadTab = useCallback(async (t) => {
     const tabDef = TABS.find(x => x.id === t);
@@ -54,6 +57,10 @@ export default function TrackerPage() {
   }, []);
 
   useEffect(() => { loadTab(tab); }, [tab, loadTab]);
+
+  useEffect(() => {
+    fetch("/api/categories").then(r => r.json()).then(d => setCategories(d.categories || [])).catch(()=>{});
+  }, []);
 
   // Refetch the active tab whenever the window regains focus or becomes visible —
   // covers leaving the tab open, sending messages via another window/device, then coming back.
@@ -190,11 +197,14 @@ export default function TrackerPage() {
     if (pocDrawer && ids.includes(pocDrawer.rec.id)) refreshPocDrawer(pocDrawer.rec.id);
   }
 
-  async function bulkMonitor(ids) {
-    const note = prompt("Optional note (e.g. 'waiting on finance team to confirm closing cost'):") || "";
-    await fetch("/api/outreach/bulk-update",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({ids,action:"monitor",payload:{note}})});
-    setSelected(new Set()); show("👁 Moved to Monitoring — no follow-ups will be sent"); reload(); loadTab("monitoring");
-    if (pocDrawer && ids.includes(pocDrawer.rec.id)) refreshPocDrawer(pocDrawer.rec.id);
+  function bulkMonitor(ids) {
+    // Opens the Snooze modal (Monitor replaced by Snooze).
+    setSnoozeIds(ids);
+  }
+
+  function afterSnooze() {
+    setSelected(new Set()); setSnoozeIds(null);
+    show("💤 Snoozed — hidden until it resurfaces for follow-up"); reload(); loadTab("monitoring");
   }
 
   async function patchOne(id, status) {
@@ -287,9 +297,12 @@ export default function TrackerPage() {
         <>
           {/* Import */}
           <div className="import-box" style={{ marginBottom:20 }}>
-            <div style={{ fontWeight:600, fontSize:14, marginBottom:10 }}>Import POCs</div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+              <div style={{ fontWeight:600, fontSize:14 }}>Import POCs</div>
+              <button className="btn btn-sm" onClick={()=>setShowReconcile(true)} title="Reconcile a category against a complete list — auto-resolves issues no longer present">🔄 Reconcile a category</button>
+            </div>
             <div className="example-box">{"Campaign\tPOC Name\tEmail (optional)\tIssue\none8 x journey\tKirsten Menezes\t\tCampaign crossed its posting end date on DMS…"}</div>
-            <p style={{ fontSize:11, color:"#9ca3af", marginBottom:10 }}>Email optional for Slack. Duplicates (same name + campaign with active outreach) auto-skipped.</p>
+            <p style={{ fontSize:11, color:"#9ca3af", marginBottom:10 }}>Email optional for Slack. Re-importing a record already in flight (same person + campaign + issue) queues a follow-up instead of sending a duplicate message.</p>
             <input placeholder="Google Sheet URL (optional)" value={sheetUrl} onChange={e=>setSheetUrl(e.target.value)} style={{ marginBottom:8 }}/>
             <textarea rows={4} placeholder="Or paste tab-separated / CSV table…" value={csvText} onChange={e=>setCsvText(e.target.value)} style={{ resize:"vertical", marginBottom:10 }}/>
             <button className="btn btn-primary" disabled={importing||(!csvText.trim()&&!sheetUrl.trim())} onClick={doImport}>
@@ -356,17 +369,13 @@ export default function TrackerPage() {
             <span style={{fontWeight:600,color:"#374151",marginRight:4}}>Buttons:</span>
             <span title="Check if the POC has replied">🔍 Check Reply</span>
             <span style={{color:"#d1d5db"}}>·</span>
-            <span title="Send a follow-up message (available for active, no reply, follow-up, stalled)">🔁 Follow-up</span>
-            <span style={{color:"#d1d5db"}}>·</span>
-            <span title="Move to Monitoring — no auto follow-ups sent">👁 Monitor</span>
+            <span title="Send a follow-up message">🔁 Follow-up</span>
             <span style={{color:"#d1d5db"}}>·</span>
             <span title="Mark as resolved / closed">✓ Resolve</span>
             <span style={{color:"#d1d5db"}}>·</span>
-            <span title="Reassign this issue to a different person — sends them a message automatically">↗ Reassign</span>
-            <span style={{color:"#d1d5db"}}>·</span>
-            <span title="Edit contact details (name, email, issue, campaign)">✏ Edit</span>
-            <span style={{color:"#d1d5db"}}>·</span>
             <span title="Open full POC details and timeline">Details</span>
+            <span style={{color:"#d1d5db"}}>·</span>
+            <span title="More actions: Snooze, Reassign, Edit">⋯ More (Snooze · Reassign · Edit)</span>
           </div>
           <FilterBar campaigns={campaigns} statusOptions={["sent","active","no_reply","followup","stalled"]}
             filterCampaign={filterCampaign} setFilterCampaign={setFilterCampaign}
@@ -376,7 +385,7 @@ export default function TrackerPage() {
           <BulkBar selected={selected.size}>
             {selCheckable.length>0 && <button className="btn btn-green btn-sm" disabled={checkingIds.size>0} onClick={()=>checkReplies(selCheckable)}>🔍 Check Replies ({selCheckable.length})</button>}
             {selNoReply.length>0 && <button className="btn btn-orange btn-sm" disabled={busy.fu} onClick={()=>setFollowupChannelIds(selNoReply)}>🔁 Follow-up ({selNoReply.length})</button>}
-            {selResolvable.length>0 && <button className="btn btn-sm" style={{background:"#ecfeff",color:"#0e7490",border:"1px solid #a5f3fc"}} onClick={()=>bulkMonitor([...selected])}>👁 Monitor</button>}
+            {selResolvable.length>0 && <button className="btn btn-sm" style={{background:"#ecfeff",color:"#0e7490",border:"1px solid #a5f3fc"}} onClick={()=>bulkMonitor([...selected])}>💤 Snooze</button>}
             {selResolvable.length>0 && <button className="btn btn-purple btn-sm" onClick={()=>bulkResolve([...selected])}>✓ Resolve ({selResolvable.length})</button>}
             {selected.size>0 && <button className="btn btn-sm" style={{background:"rgba(255,255,255,.1)",color:"rgba(255,255,255,.8)",border:"1px solid rgba(255,255,255,.2)",marginLeft:"auto"}} onClick={()=>setEscalateIds([...selected])}>↗ Reassign</button>}
           </BulkBar>
@@ -405,11 +414,13 @@ export default function TrackerPage() {
                         <td><Cell gap>
                           {["sent","active","no_reply","followup","stalled"].includes(r.status)&&<button className="btn btn-green btn-sm" disabled={checking} onClick={()=>checkReplies([r.id])} title="Check for reply">{checking?"…":"🔍"}</button>}
                           {["active","no_reply","stalled","followup"].includes(r.status)&&<button className="btn btn-orange btn-sm" disabled={busy.fu} onClick={()=>setFollowupChannelIds([r.id])} title="Send follow-up">🔁</button>}
-                          <button className="btn btn-sm" style={{background:"#ecfeff",color:"#0e7490",border:"1px solid #a5f3fc",fontSize:11}} onClick={()=>bulkMonitor([r.id])} title="Acknowledge — no action needed right now">👁</button>
                           <button className="btn btn-purple btn-sm" onClick={()=>patchOne(r.id,"resolved")} title="Mark resolved">✓</button>
-                          <button className="btn btn-sm" style={{fontSize:11}} onClick={()=>setEscalateIds([r.id])} title="Reassign to someone else">↗</button>
-                          <button className="btn btn-sm" onClick={()=>setEditRec(r)}>✏</button>
                           <button className="btn btn-sm" style={{color:"#6b7280"}} onClick={()=>openPocDrawer(r)}>Details</button>
+                          <RowMenu items={[
+                            { label:"💤 Snooze", onClick:()=>bulkMonitor([r.id]) },
+                            { label:"↗ Reassign", onClick:()=>setEscalateIds([r.id]) },
+                            { label:"✏ Edit contact", onClick:()=>setEditRec(r) },
+                          ]}/>
                         </Cell></td>
                       </tr>
                     );
@@ -614,7 +625,7 @@ export default function TrackerPage() {
                       <button className="btn btn-orange btn-sm" onClick={()=>{setFollowupChannelIds([pocDrawer.rec.id]);setPocDrawer(null);}}>🔁 Follow-up</button>
                     )}
                     <button className="btn btn-purple btn-sm" onClick={()=>patchOne(pocDrawer.rec.id,"resolved")}>✓ Resolve</button>
-                    <button className="btn btn-sm" style={{background:"#ecfeff",color:"#0e7490",border:"1px solid #a5f3fc"}} onClick={()=>bulkMonitor([pocDrawer.rec.id])}>👁 Monitor</button>
+                    <button className="btn btn-sm" style={{background:"#ecfeff",color:"#0e7490",border:"1px solid #a5f3fc"}} onClick={()=>bulkMonitor([pocDrawer.rec.id])}>💤 Snooze</button>
                     <button className="btn btn-sm" onClick={()=>{setEscalateIds([pocDrawer.rec.id]);setPocDrawer(null);}}>↗ Reassign</button>
                   </div>
                 </div>
@@ -661,6 +672,12 @@ export default function TrackerPage() {
 
       {/* Reassign modal */}
       {escalateIds&&<EscalateModal ids={escalateIds} records={currentRecs} onClose={()=>setEscalateIds(null)} onDone={()=>{reload();loadTab("outreach");}}/>}
+
+      {/* Reconcile modal */}
+      {showReconcile&&<ReconcileModal categories={categories} onClose={()=>setShowReconcile(false)} onDone={(r)=>{show(`✅ Reconciled — ${r.resolved} auto-resolved, ${r.created} created`);reload();}}/>}
+
+      {/* Snooze modal */}
+      {snoozeIds&&<SnoozeModal ids={snoozeIds} onClose={()=>setSnoozeIds(null)} onDone={afterSnooze}/>}
 
       {/* Follow-up channel picker */}
       {followupChannelIds && (

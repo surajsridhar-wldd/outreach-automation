@@ -293,3 +293,189 @@ export function SendProgressModal({ progress, onClose }) {
     </div>
   );
 }
+
+// ── Reconcile Modal (category-scoped, dry-run first) ──────────────────────────
+export function ReconcileModal({ categories, onClose, onDone }) {
+  const [category, setCategory] = useState("");
+  const [csvText, setCsvText] = useState("");
+  const [complete, setComplete] = useState(false);
+  const [preview, setPreview] = useState(null); // dry-run result
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function runDryRun() {
+    setError(null);
+    if (!category) { setError("Pick a category first."); return; }
+    if (!complete) { setError("Tick the box confirming this is the complete list for the category."); return; }
+    setBusy(true);
+    const r = await fetch("/api/reconcile", {
+      method:"POST", headers:{"content-type":"application/json"},
+      body:JSON.stringify({ category, csvText, complete, dryRun:true }),
+    }).then(r=>r.json());
+    setBusy(false);
+    if (r.error) { setError(r.error); return; }
+    setPreview(r);
+  }
+
+  async function confirmApply() {
+    setBusy(true);
+    const r = await fetch("/api/reconcile", {
+      method:"POST", headers:{"content-type":"application/json"},
+      body:JSON.stringify({ category, csvText, complete, dryRun:false }),
+    }).then(r=>r.json());
+    setBusy(false);
+    if (r.error) { setError(r.error); return; }
+    onDone(r); onClose();
+  }
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal" style={{ maxWidth:640 }}>
+        <h3>Reconcile a category</h3>
+        <p style={{ fontSize:13, color:"#6b7280", marginBottom:16 }}>
+          Paste the <strong>current complete list</strong> of open issues for ONE category. Anything still open in that category but missing from your list will be auto-resolved (it dropped off your source = fixed). Only the chosen category is touched.
+        </p>
+        {error && <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:8, padding:"8px 12px", fontSize:12, color:"#dc2626", marginBottom:12 }}>{error}</div>}
+
+        {!preview ? (
+          <>
+            <div className="form-field">
+              <label>Category</label>
+              <select value={category} onChange={e=>setCategory(e.target.value)}>
+                <option value="">Select a category…</option>
+                {categories.map(c => <option key={c.id} value={c.tag}>{c.name}</option>)}
+              </select>
+            </div>
+            <div className="form-field">
+              <label>Paste rows (Campaign · Name · Email · Issue)</label>
+              <textarea rows={8} placeholder="Paste the complete current list for this category…" value={csvText} onChange={e=>setCsvText(e.target.value)} style={{ resize:"vertical" }} />
+            </div>
+            <div className="toggle-row" style={{ marginBottom:16, background:"#fffbeb", border:"1px solid #fde68a", borderRadius:8, padding:"10px 12px" }}>
+              <input type="checkbox" id="complete" checked={complete} onChange={e=>setComplete(e.target.checked)} />
+              <label htmlFor="complete" style={{ fontSize:13 }}>This is the <strong>complete</strong> current list of open issues for this category. Records absent from it are resolved.</label>
+            </div>
+            <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+              <button className="btn" onClick={onClose}>Cancel</button>
+              <button className="btn btn-primary" disabled={busy} onClick={runDryRun}>{busy?"Checking…":"Preview →"}</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ display:"flex", gap:12, marginBottom:16, flexWrap:"wrap" }}>
+              <PreviewStat n={preview.summary.matched} label="Still open (matched)" color="#059669" />
+              <PreviewStat n={preview.summary.toCreate} label="New → will create" color="#1d4ed8" />
+              <PreviewStat n={preview.summary.toResolve} label="Will auto-resolve" color="#dc2626" />
+            </div>
+            {preview.toResolve.length > 0 && (
+              <div style={{ marginBottom:16 }}>
+                <div style={{ fontSize:11, fontWeight:700, color:"#9ca3af", letterSpacing:1, textTransform:"uppercase", marginBottom:6 }}>Will be auto-resolved</div>
+                <div style={{ maxHeight:180, overflowY:"auto", border:"1px solid #fecaca", borderRadius:8 }}>
+                  {preview.toResolve.map(r => (
+                    <div key={r.id} style={{ padding:"8px 12px", borderBottom:"1px solid #fee2e2", fontSize:12 }}>
+                      <strong>{r.name}</strong> · {r.campaign} <div style={{ color:"#6b7280" }}>{r.issue}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div style={{ fontSize:12, color:"#6b7280", marginBottom:16 }}>🔒 Records in all other categories are untouched.</div>
+            <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+              <button className="btn" onClick={()=>setPreview(null)}>← Back</button>
+              <button className="btn btn-primary" disabled={busy} onClick={confirmApply}>{busy?"Applying…":`Confirm — resolve ${preview.summary.toResolve}, create ${preview.summary.toCreate}`}</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PreviewStat({ n, label, color }) {
+  return (
+    <div style={{ flex:1, minWidth:120, textAlign:"center", border:`1px solid ${color}22`, borderRadius:8, padding:"12px 8px", background:`${color}08` }}>
+      <div style={{ fontSize:24, fontWeight:700, color }}>{n}</div>
+      <div style={{ fontSize:11, color:"#6b7280", marginTop:2 }}>{label}</div>
+    </div>
+  );
+}
+
+// ── Snooze Modal (day picker) ─────────────────────────────────────────────────
+export function SnoozeModal({ ids, onClose, onDone }) {
+  const [days, setDays] = useState(7);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const presets = [3, 7, 14, 30];
+
+  async function submit() {
+    setBusy(true);
+    await fetch("/api/outreach/bulk-update", {
+      method:"POST", headers:{"content-type":"application/json"},
+      body:JSON.stringify({ ids, action:"snooze", payload:{ days, note } }),
+    });
+    setBusy(false);
+    onDone(); onClose();
+  }
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal">
+        <h3>Snooze {ids.length > 1 ? `${ids.length} records` : "record"}</h3>
+        <p style={{ fontSize:13, color:"#6b7280", marginBottom:16 }}>
+          Hidden from In Flight until the snooze expires, then auto-resurfaced for follow-up. No follow-ups sent while snoozed.
+        </p>
+        <div className="form-field">
+          <label>Snooze for</label>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:8 }}>
+            {presets.map(p => (
+              <button key={p} className={`btn btn-sm ${days===p?"btn-primary":""}`} onClick={()=>setDays(p)}>{p} days</button>
+            ))}
+            <button className={`btn btn-sm ${days===0?"btn-primary":""}`} onClick={()=>setDays(0)}>Indefinite</button>
+          </div>
+          {days !== 0 && (
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <span style={{ fontSize:13, color:"#6b7280" }}>or custom:</span>
+              <input type="number" min="1" max="365" value={days} onChange={e=>setDays(+e.target.value)} style={{ width:80 }} />
+              <span style={{ fontSize:13, color:"#6b7280" }}>days</span>
+            </div>
+          )}
+        </div>
+        <div className="form-field">
+          <label>Note (optional)</label>
+          <textarea rows={2} placeholder="Why are you snoozing this?" value={note} onChange={e=>setNote(e.target.value)} style={{ resize:"vertical" }} />
+        </div>
+        <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" disabled={busy} onClick={submit}>{busy?"Snoozing…":days===0?"Snooze indefinitely":`Snooze ${days} days`}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Row overflow menu (⋯) — demotes occasional actions to keep rows clean ──────
+export function RowMenu({ items }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [open]);
+  return (
+    <span style={{ position:"relative", display:"inline-block" }}>
+      <button className="btn btn-sm" onClick={(e)=>{ e.stopPropagation(); setOpen(o=>!o); }} title="More actions">⋯</button>
+      {open && (
+        <div style={{ position:"absolute", right:0, top:"100%", marginTop:4, background:"#fff", border:"1px solid #e5e7eb", borderRadius:8, boxShadow:"0 4px 16px rgba(0,0,0,.1)", zIndex:50, minWidth:160, overflow:"hidden" }} onClick={e=>e.stopPropagation()}>
+          {items.map((it, i) => (
+            <button key={i} onClick={()=>{ setOpen(false); it.onClick(); }}
+              style={{ display:"block", width:"100%", textAlign:"left", padding:"8px 12px", fontSize:13, border:"none", background:"none", cursor:"pointer", color:it.danger?"#dc2626":"#374151" }}
+              onMouseEnter={e=>e.currentTarget.style.background="#f3f4f6"}
+              onMouseLeave={e=>e.currentTarget.style.background="none"}>
+              {it.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </span>
+  );
+}

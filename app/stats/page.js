@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback } from "react";
 
 export default function StatsPage() {
   const [stats, setStats] = useState([]);
+  const [byCategory, setByCategory] = useState([]);
   const [me, setMe] = useState(null);
   const [scope, setScope] = useState("mine");
   const [downloading, setDownloading] = useState(false);
@@ -10,7 +11,7 @@ export default function StatsPage() {
   useEffect(() => { fetch("/api/me").then(r => r.json()).then(setMe); }, []);
 
   const load = useCallback(() => {
-    fetch(`/api/stats?scope=${scope}`).then(r => r.json()).then(d => setStats(d.stats || []));
+    fetch(`/api/stats?scope=${scope}`).then(r => r.json()).then(d => { setStats(d.stats || []); setByCategory(d.byCategory || []); });
   }, [scope]);
 
   useEffect(() => { load(); }, [load]);
@@ -60,6 +61,38 @@ export default function StatsPage() {
         <div className="tabs" style={{ marginBottom:20 }}>
           <button className={`tab-btn ${scope==="mine"?"active":""}`} onClick={() => setScope("mine")}>My outreach</button>
           <button className={`tab-btn ${scope==="all"?"active":""}`} onClick={() => setScope("all")}>★ Global (all users)</button>
+        </div>
+      )}
+
+      {byCategory.length > 0 && (
+        <div style={{ marginBottom:28 }}>
+          <h2 style={{ fontSize:15, fontWeight:700, marginBottom:4 }}>By Category</h2>
+          <p style={{ fontSize:12, color:"#6b7280", marginBottom:12 }}>Which problem types get ignored most. Reply rate and resolution by category.</p>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(220px, 1fr))", gap:12 }}>
+            {byCategory.map(c => (
+              <div key={c.category} style={{ border:"1px solid #e5e7eb", borderRadius:10, padding:14, background:"#fff" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:10 }}>
+                  <code style={{ background:"#f3f4f6", padding:"2px 6px", borderRadius:4, fontSize:11, fontWeight:600 }}>{c.category}</code>
+                </div>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+                  <span style={{ fontSize:12, color:"#6b7280" }}>Open / Total</span>
+                  <span style={{ fontSize:13, fontWeight:600 }}>{c.open} / {c.total}</span>
+                </div>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+                  <span style={{ fontSize:12, color:"#6b7280" }}>Reply rate</span>
+                  <span style={{ fontSize:13, fontWeight:600, color: c.reply_rate_pct < 40 ? "#dc2626" : c.reply_rate_pct < 70 ? "#d97706" : "#059669" }}>{c.reply_rate_pct}%</span>
+                </div>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+                  <span style={{ fontSize:12, color:"#6b7280" }}>Resolved</span>
+                  <span style={{ fontSize:13, fontWeight:600, color:"#7c3aed" }}>{c.resolved}</span>
+                </div>
+                <div style={{ display:"flex", justifyContent:"space-between" }}>
+                  <span style={{ fontSize:12, color:"#6b7280" }}>Avg response</span>
+                  <span style={{ fontSize:13, fontWeight:600, color:"#6b7280" }}>{c.avg_response_hours != null ? `${c.avg_response_hours}h` : "—"}</span>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
