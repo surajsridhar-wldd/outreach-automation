@@ -49,12 +49,28 @@ export default function Settings() {
         if (!res || res.error) { show("⚠ " + (res?.error || "Backfill failed")); break; }
         totalTagged += res.tagged || 0; totalChecked += res.checked || 0;
         const remaining = kind === "tag" ? res.taggedRemaining : res.checkedRemaining;
+
+        // If a tag pass made zero progress, surface diagnostics instead of looping pointlessly.
+        if (kind === "tag" && (res.tagged || 0) === 0) {
+          const diag = [];
+          if (res.tagError) diag.push(`error: ${res.tagError}`);
+          if (res.updateError) diag.push(`db update: ${res.updateError}`);
+          if (typeof res.tagFound === "number") diag.push(`found ${res.tagFound}`);
+          if (typeof res.catsLoaded === "number") diag.push(`categories ${res.catsLoaded}`);
+          if (typeof res.itemsWithIssue === "number") diag.push(`items w/ issue ${res.itemsWithIssue}`);
+          if (res.sampleResult) diag.push(`sample ${res.sampleResult}`);
+          setBackfillMsg(`⚠ Tagged 0. Diagnostics — ${diag.join(" · ") || "no info"}`);
+          break;
+        }
+
         setBackfillMsg(kind === "tag"
           ? `Tagged ${totalTagged}… ${remaining} remaining`
           : `Re-checked ${totalChecked}… ${remaining} remaining`);
         if ((remaining || 0) === 0) break;
       }
-      setBackfillMsg(kind === "tag" ? `✓ Done — tagged ${totalTagged} records.` : `✓ Done — re-checked ${totalChecked} records.`);
+      if (!(kind === "tag" && totalTagged === 0)) {
+        setBackfillMsg(kind === "tag" ? `✓ Done — tagged ${totalTagged} records.` : `✓ Done — re-checked ${totalChecked} records.`);
+      }
       fetch("/api/backfill").then(r=>r.json()).then(setBackfill).catch(()=>{});
     } catch (e) {
       setBackfillMsg("⚠ " + e.message);

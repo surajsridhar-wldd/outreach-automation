@@ -49,28 +49,40 @@ export async function POST(req) {
 
   // ── Job 1: category tagging (all users' records, batched per user) ───────────
   if (doTag) {
-    const { data: untagged } = await db.from("outreach_records")
+    const { data: untagged, error: qErr } = await db.from("outreach_records")
       .select("id, user_id, contacts(campaign, issue)")
       .is("category", null).is("category_confidence", null)
       .neq("status", "resolved").neq("status", "escalated")
       .limit(limit);
 
+    if (qErr) result.tagError = `query failed: ${qErr.message}`;
+    result.tagFound = (untagged || []).length;
+
     const byUser = {};
     for (const r of untagged || []) (byUser[r.user_id] ||= []).push(r);
     for (const [uid, recs] of Object.entries(byUser)) {
       const cats = await getCategories(uid);
-      if (!cats.length) continue;
+      result.catsLoaded = (result.catsLoaded || 0) + cats.length;
+      if (!cats.length) { result.tagError = `no categories for user ${uid}`; continue; }
       const items = recs.map(r => ({ id: r.id, campaign: r.contacts?.campaign, issue: r.contacts?.issue })).filter(it => it.issue);
+      result.itemsWithIssue = (result.itemsWithIssue || 0) + items.length;
       if (!items.length) continue;
-      const results = await categorizeIssuesBatch({ items, categories: cats });
+      let results;
+      try {
+        results = await categorizeIssuesBatch({ items, categories: cats });
+      } catch (e) {
+        result.tagError = `categorize threw: ${e.message}`;
+        continue;
+      }
+      const sample = results[items[0].id];
+      result.sampleResult = sample ? JSON.stringify(sample) : "none";
       for (const it of items) {
         const res = results[it.id];
         if (!res) continue;
         const { error } = await db.from("outreach_records").update({ category: res.tag, category_confidence: res.confidence }).eq("id", it.id);
-        if (!error) {
-          result.tagged++;
-          if (res.tag) await logEvent({ outreachId: it.id, userId: uid, action: "category_tagged", payload: { category: res.tag, confidence: res.confidence, backfill: true } });
-        }
+        if (error) { result.updateError = error.message; continue; }
+        result.tagged++;
+        if (res.tag) await logEvent({ outreachId: it.id, userId: uid, action: "category_tagged", payload: { category: res.tag, confidence: res.confidence, backfill: true } });
       }
     }
 
