@@ -479,3 +479,25 @@ export function RowMenu({ items }) {
     </span>
   );
 }
+
+// ── Category chip — small inline tag showing a record's auto-assigned category ──
+const CAT_COLORS = ["#7c3aed","#0e7490","#b45309","#1d4ed8","#be185d","#15803d","#9333ea","#0369a1"];
+function catColor(tag) {
+  if (!tag) return "#9ca3af";
+  let h = 0; for (let i=0;i<tag.length;i++) h = (h*31 + tag.charCodeAt(i)) >>> 0;
+  return CAT_COLORS[h % CAT_COLORS.length];
+}
+export function CategoryChip({ category, categories }) {
+  if (!category) return <span style={{ fontSize:10, color:"#d1d5db" }}>uncategorized</span>;
+  const meta = (categories || []).find(c => c.tag === category);
+  const color = catColor(category);
+  return (
+    <span title={meta?.description || category} style={{
+      display:"inline-block", fontSize:10, fontWeight:600, color,
+      background:`${color}14`, border:`1px solid ${color}33`, borderRadius:99,
+      padding:"1px 8px", marginTop:4,
+    }}>
+      {meta?.name || category}
+    </span>
+  );
+}

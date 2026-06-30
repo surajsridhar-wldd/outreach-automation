@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
-import { Badge, DaysChip, days, SC, CampaignDrawer, EditModal, EscalateModal, BulkBar, SendProgressModal, ReconcileModal, SnoozeModal, RowMenu } from "@/components/shared";
+import { Badge, DaysChip, days, SC, CampaignDrawer, EditModal, EscalateModal, BulkBar, SendProgressModal, ReconcileModal, SnoozeModal, RowMenu, CategoryChip } from "@/components/shared";
 
 const TABS = [
   { id:"outreach",   label:"Outreach",   statuses:["pending"],                          help:"Imported but not yet sent." },
@@ -344,7 +344,7 @@ export default function TrackerPage() {
                       <tr key={r.id}>
                         <td><Chk checked={selected.has(r.id)} onChange={()=>toggle(r.id)}/></td>
                         <td><Cell><div className="poc-name">{r.contacts?.name}</div><div className="poc-email">{r.contacts?.email||<span style={{color:"#f97316",fontSize:11}}>No email — Slack only</span>}</div></Cell></td>
-                        <td><Cell>{r.contacts?.campaign?<span className="campaign-pill" onClick={()=>setDrawer(r.contacts.campaign)}>{r.contacts.campaign} ↗</span>:"—"}</Cell></td>
+                        <td><Cell>{r.contacts?.campaign?<span className="campaign-pill" onClick={()=>setDrawer(r.contacts.campaign)}>{r.contacts.campaign} ↗</span>:"—"}<div><CategoryChip category={r.category} categories={categories}/></div></Cell></td>
                         <td><Cell><div className="issue-text">{r.contacts?.issue}</div></Cell></td>
                         <td><Cell gap>
                           <button className="btn btn-sm" onClick={()=>setEditRec(r)}>✏ Edit</button>
@@ -403,7 +403,7 @@ export default function TrackerPage() {
                       <tr key={r.id}>
                         <td><Chk checked={selected.has(r.id)} onChange={()=>toggle(r.id)}/></td>
                         <td><Cell onClick={()=>openPocDrawer(r)} clickable><div className="poc-name">{r.contacts?.name}</div><div className="poc-email">{r.contacts?.email||"—"}</div></Cell></td>
-                        <td><Cell>{r.contacts?.campaign?<span className="campaign-pill" onClick={()=>setDrawer(r.contacts.campaign)}>{r.contacts.campaign} ↗</span>:"—"}</Cell></td>
+                        <td><Cell>{r.contacts?.campaign?<span className="campaign-pill" onClick={()=>setDrawer(r.contacts.campaign)}>{r.contacts.campaign} ↗</span>:"—"}<div><CategoryChip category={r.category} categories={categories}/></div></Cell></td>
                         <td><Cell>
                           <Badge status={r.status}/>
                           {r.message_notes&&<div style={{fontSize:11,color:"#6b7280",marginTop:4,fontStyle:"italic"}}>{r.message_notes}</div>}
@@ -457,7 +457,7 @@ export default function TrackerPage() {
                       <Chk checked={selected.has(r.id)} onChange={()=>toggle(r.id)}/>
                       <span className="poc-name">{r.contacts?.name}</span>
                       <span style={{fontSize:12,color:"#9ca3af"}}>{r.contacts?.email}</span>
-                      {r.contacts?.campaign&&<span className="campaign-pill" onClick={()=>setDrawer(r.contacts.campaign)}>{r.contacts.campaign}</span>}
+                      {r.contacts?.campaign&&<span className="campaign-pill" onClick={()=>setDrawer(r.contacts.campaign)}>{r.contacts.campaign}</span>}<div><CategoryChip category={r.category} categories={categories}/></div>
                     </div>
                     <div style={{fontSize:12,color:"#6b7280",marginBottom:6}}><strong>Issue:</strong> {r.contacts?.issue}</div>
                     {r.message_notes&&<div style={{fontSize:12,color:"#6b7280",fontStyle:"italic"}}>Summary: "{r.message_notes}"</div>}
@@ -512,7 +512,7 @@ export default function TrackerPage() {
                     <tr key={r.id}>
                       <td><Chk checked={selected.has(r.id)} onChange={()=>toggle(r.id)}/></td>
                       <td><Cell onClick={()=>openPocDrawer(r)} clickable><div className="poc-name">{r.contacts?.name}</div><div className="poc-email">{r.contacts?.email||"—"}</div></Cell></td>
-                      <td><Cell>{r.contacts?.campaign?<span className="campaign-pill" onClick={()=>setDrawer(r.contacts.campaign)}>{r.contacts.campaign} ↗</span>:"—"}</Cell></td>
+                      <td><Cell>{r.contacts?.campaign?<span className="campaign-pill" onClick={()=>setDrawer(r.contacts.campaign)}>{r.contacts.campaign} ↗</span>:"—"}<div><CategoryChip category={r.category} categories={categories}/></div></Cell></td>
                       <td><Cell><div style={{fontSize:12,color:"#6b7280",fontStyle:"italic",maxWidth:240}}>{r.message_notes||"—"}</div></Cell></td>
                       <td><Cell><span style={{fontSize:12,color:"#9ca3af"}}>{r.last_action_at?new Date(r.last_action_at).toLocaleDateString():"—"}</span></Cell></td>
                       <td><Cell gap>
@@ -550,7 +550,7 @@ export default function TrackerPage() {
                     <tr key={r.id}>
                       <td><Chk checked={selected.has(r.id)} onChange={()=>toggle(r.id)}/></td>
                       <td><Cell onClick={()=>openPocDrawer(r)} clickable><div className="poc-name">{r.contacts?.name}</div><div className="poc-email">{r.contacts?.email||"—"}</div></Cell></td>
-                      <td><Cell>{r.contacts?.campaign?<span className="campaign-pill" onClick={()=>setDrawer(r.contacts.campaign)}>{r.contacts.campaign} ↗</span>:"—"}</Cell></td>
+                      <td><Cell>{r.contacts?.campaign?<span className="campaign-pill" onClick={()=>setDrawer(r.contacts.campaign)}>{r.contacts.campaign} ↗</span>:"—"}<div><CategoryChip category={r.category} categories={categories}/></div></Cell></td>
                       <td><Cell><Badge status={r.status}/>{r.message_notes&&<div style={{fontSize:11,color:"#6b7280",marginTop:4,fontStyle:"italic"}}>{r.message_notes}</div>}</Cell></td>
                       <td><Cell><span style={{fontSize:12,color:"#9ca3af"}}>{r.last_action_at?new Date(r.last_action_at).toLocaleDateString():"—"}</span></Cell></td>
                       <td><Cell gap>
@@ -594,6 +594,7 @@ export default function TrackerPage() {
                 <div className="drawer-section">
                   <div className="drawer-section-title">Campaign</div>
                   <span className="campaign-pill" onClick={()=>{setPocDrawer(null);setDrawer(pocDrawer.rec.contacts.campaign);}}>{pocDrawer.rec.contacts.campaign} — view all ↗</span>
+                  <div style={{marginTop:6}}><CategoryChip category={pocDrawer.rec.category} categories={categories}/></div>
                 </div>
               )}
               {/* Replies */}
