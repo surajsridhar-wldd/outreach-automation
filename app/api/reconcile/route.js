@@ -139,19 +139,20 @@ export async function POST(req) {
     }
   }
 
+  const createErrors = [];
   for (const row of toCreate) {
     const { data: contact, error: cErr } = await db.from("contacts").insert({
       user_id: user.id, name: row.name, email: row.email || null,
       campaign: row.campaign || null, issue: row.issue, source: "reconcile",
     }).select("id").single();
-    if (cErr) continue;
+    if (cErr) { createErrors.push(`contact "${row.name}": ${cErr.message}`); continue; }
     const { data: outreach, error: oErr } = await db.from("outreach_records").insert({
       contact_id: contact.id, user_id: user.id, status: "pending", category,
     }).select("id").single();
-    if (oErr) continue;
+    if (oErr) { createErrors.push(`outreach "${row.name}": ${oErr.message}`); continue; }
     await logEvent({ outreachId: outreach.id, userId: user.id, action: "created", newStatus: "pending", payload: { via: "reconcile", category } });
     createdCount++;
   }
 
-  return Response.json({ ok: true, resolved, created: createdCount, matched: matched.length });
+  return Response.json({ ok: true, resolved, created: createdCount, matched: matched.length, createErrors: createErrors.slice(0, 5), toCreateCount: toCreate.length });
 }

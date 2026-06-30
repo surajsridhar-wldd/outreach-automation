@@ -45,6 +45,7 @@ export default function TrackerPage() {
   const [followupChannelIds, setFollowupChannelIds] = useState(null); // ids pending channel choice for follow-up
   const [tagging, setTagging]       = useState(null);       // null | 'running' | 'done'  — categorization marker
   const [filterStatus, setFilterStatus] = useState("");
+  const [filterCategory, setFilterCategory] = useState("");
   const [showReconcile, setShowReconcile] = useState(false);
   const [snoozeIds, setSnoozeIds]   = useState(null);
   const [categories, setCategories] = useState([]);
@@ -81,6 +82,7 @@ export default function TrackerPage() {
   const view = currentRecs
     .filter(r => !filterCampaign || r.contacts?.campaign === filterCampaign)
     .filter(r => !filterStatus || r.status === filterStatus)
+    .filter(r => !filterCategory || r.category === filterCategory || (filterCategory==="__none__" && !r.category))
     .filter(r => !searchLower ||
       (r.contacts?.name||"").toLowerCase().includes(searchLower) ||
       (r.contacts?.campaign||"").toLowerCase().includes(searchLower) ||
@@ -380,7 +382,8 @@ export default function TrackerPage() {
           <FilterBar campaigns={campaigns} statusOptions={["sent","active","no_reply","followup","stalled"]}
             filterCampaign={filterCampaign} setFilterCampaign={setFilterCampaign}
             filterStatus={filterStatus} setFilterStatus={setFilterStatus}
-            count={view.length} onClear={()=>{setFilterCampaign("");setFilterStatus("");}} />
+            filterCategory={filterCategory} setFilterCategory={setFilterCategory} categories={categories}
+            count={view.length} onClear={()=>{setFilterCampaign("");setFilterStatus("");setFilterCategory("");}} />
           <SelectAllRow total={view.length} selected={selected.size} onToggle={toggleAll} />
           <BulkBar selected={selected.size}>
             {selCheckable.length>0 && <button className="btn btn-green btn-sm" disabled={checkingIds.size>0} onClick={()=>checkReplies(selCheckable)}>🔍 Check Replies ({selCheckable.length})</button>}
@@ -535,7 +538,8 @@ export default function TrackerPage() {
           <FilterBar campaigns={campaigns} statusOptions={["resolved","escalated"]}
             filterCampaign={filterCampaign} setFilterCampaign={setFilterCampaign}
             filterStatus={filterStatus} setFilterStatus={setFilterStatus}
-            count={view.length} onClear={()=>{setFilterCampaign("");setFilterStatus("");}} />
+            filterCategory={filterCategory} setFilterCategory={setFilterCategory} categories={categories}
+            count={view.length} onClear={()=>{setFilterCampaign("");setFilterStatus("");setFilterCategory("");}} />
           <SelectAllRow total={view.length} selected={selected.size} onToggle={toggleAll} />
           {selected.size>0&&<div style={{marginBottom:10}}><button className="btn btn-red btn-sm" onClick={()=>bulkDelete([...selected])}>🗑 Delete selected</button></div>}
 
@@ -675,7 +679,13 @@ export default function TrackerPage() {
       {escalateIds&&<EscalateModal ids={escalateIds} records={currentRecs} onClose={()=>setEscalateIds(null)} onDone={()=>{reload();loadTab("outreach");}}/>}
 
       {/* Reconcile modal */}
-      {showReconcile&&<ReconcileModal categories={categories} onClose={()=>setShowReconcile(false)} onDone={(r)=>{show(`✅ Reconciled — ${r.resolved} auto-resolved, ${r.created} created`);reload();}}/>}
+      {showReconcile&&<ReconcileModal categories={categories} onClose={()=>setShowReconcile(false)} onDone={(r)=>{
+        let msg = `✅ Reconciled — ${r.resolved} auto-resolved, ${r.created} created`;
+        if (r.createErrors && r.createErrors.length) msg += ` · ⚠ ${r.createErrors.length} create errors: ${r.createErrors[0]}`;
+        else if (r.created < r.toCreateCount) msg += ` · ⚠ ${r.toCreateCount - r.created} expected but not created`;
+        show(msg);
+        reload(); setTab("outreach");
+      }}/>}
 
       {/* Snooze modal */}
       {snoozeIds&&<SnoozeModal ids={snoozeIds} onClose={()=>setSnoozeIds(null)} onDone={afterSnooze}/>}
@@ -732,7 +742,7 @@ function SelectAllRow({ total, selected, onToggle }) {
   );
 }
 
-function FilterBar({ campaigns, statusOptions, filterCampaign, setFilterCampaign, filterStatus, setFilterStatus, count, onClear }) {
+function FilterBar({ campaigns, statusOptions, filterCampaign, setFilterCampaign, filterStatus, setFilterStatus, filterCategory, setFilterCategory, categories, count, onClear }) {
   return (
     <div style={{display:"flex",gap:10,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
       <select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)} style={{width:"auto",minWidth:160}}>
@@ -745,7 +755,14 @@ function FilterBar({ campaigns, statusOptions, filterCampaign, setFilterCampaign
           {campaigns.map(c=><option key={c} value={c}>{c}</option>)}
         </select>
       )}
-      {(filterStatus||filterCampaign)&&<button className="btn btn-sm" onClick={onClear}>✕ Clear</button>}
+      {categories&&categories.length>0&&(
+        <select value={filterCategory||""} onChange={e=>setFilterCategory(e.target.value)} style={{width:"auto",minWidth:160}}>
+          <option value="">All categories</option>
+          {categories.map(c=><option key={c.tag} value={c.tag}>{c.name}</option>)}
+          <option value="__none__">Uncategorized</option>
+        </select>
+      )}
+      {(filterStatus||filterCampaign||filterCategory)&&<button className="btn btn-sm" onClick={onClear}>✕ Clear</button>}
       <span style={{marginLeft:"auto",fontSize:12,color:"#9ca3af"}}>{count} records</span>
     </div>
   );
