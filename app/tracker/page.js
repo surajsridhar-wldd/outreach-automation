@@ -340,7 +340,7 @@ export default function TrackerPage() {
               </BulkBar>
               <div className="tbl-wrap">
                 <table>
-                  <thead><tr><th style={{width:32}}></th><th>POC</th><th>CAMPAIGN</th><th>ISSUE</th><th>ACTIONS</th></tr></thead>
+                  <thead><tr><th style={{width:32}}></th><th style={{minWidth:140}}>POC</th><th>CAMPAIGN</th><th>ISSUE</th><th>ACTIONS</th></tr></thead>
                   <tbody>
                     {view.map(r=>(
                       <tr key={r.id}>
@@ -398,7 +398,7 @@ export default function TrackerPage() {
           ) : (
             <div className="tbl-wrap">
               <table>
-                <thead><tr><th style={{width:32}}></th><th>POC</th><th>CAMPAIGN</th><th>STATUS</th><th>DAYS</th><th>FU</th><th>ACTIONS</th></tr></thead>
+                <thead><tr><th style={{width:32}}></th><th style={{minWidth:140}}>POC</th><th>CAMPAIGN</th><th>STATUS</th><th>DAYS</th><th>FU</th><th>ACTIONS</th></tr></thead>
                 <tbody>
                   {view.map(r=>{
                     const checking=checkingIds.has(r.id);
@@ -511,7 +511,7 @@ export default function TrackerPage() {
           ) : (
             <div className="tbl-wrap">
               <table>
-                <thead><tr><th style={{width:32}}></th><th>POC</th><th>CAMPAIGN</th><th>NOTE</th><th>RESURFACES</th><th>ACTIONS</th></tr></thead>
+                <thead><tr><th style={{width:32}}></th><th style={{minWidth:140}}>POC</th><th>CAMPAIGN</th><th>NOTE</th><th>RESURFACES</th><th>ACTIONS</th></tr></thead>
                 <tbody>
                   {view.map(r=>{
                     const checking=checkingIds.has(r.id);
@@ -557,7 +557,7 @@ export default function TrackerPage() {
           ) : (
             <div className="tbl-wrap">
               <table>
-                <thead><tr><th style={{width:32}}></th><th>POC</th><th>CAMPAIGN</th><th>STATUS</th><th>CLOSED</th><th>ACTIONS</th></tr></thead>
+                <thead><tr><th style={{width:32}}></th><th style={{minWidth:140}}>POC</th><th>CAMPAIGN</th><th>STATUS</th><th>CLOSED</th><th>ACTIONS</th></tr></thead>
                 <tbody>
                   {view.map(r=>(
                     <tr key={r.id}>
