@@ -495,36 +495,45 @@ export default function TrackerPage() {
       {tab==="monitoring" && (
         <>
           <div style={{background:"#ecfeff",border:"1px solid #a5f3fc",borderRadius:8,padding:"10px 14px",marginBottom:16,fontSize:13,color:"#0e7490"}}>
-            👁 These are acknowledged — you're waiting on something out of your control (their side, another team, the system). No follow-ups go out automatically. If the same person + campaign issue comes up again in a future import, it just refreshes the date here — it won't create a duplicate or re-send anything.
+            💤 Snoozed records are hidden from In Flight until their snooze expires, then auto-resurface for follow-up. <strong>Automatic</strong> follow-ups don't go out while snoozed — but you can still manually check for replies or send a follow-up here if you want to. Manually following up re-activates the record. Re-imports of the same issue just refresh the date.
           </div>
           <SelectAllRow total={view.length} selected={selected.size} onToggle={toggleAll} />
           {selected.size>0 && (
-            <div style={{display:"flex",gap:8,marginBottom:12}}>
+            <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+              <button className="btn btn-green btn-sm" disabled={checkingIds.size>0} onClick={()=>checkReplies([...selected])}>🔍 Check replies</button>
+              <button className="btn btn-orange btn-sm" disabled={busy.fu} onClick={()=>setFollowupChannelIds([...selected])}>🔁 Follow-up selected</button>
               <button className="btn btn-purple btn-sm" onClick={()=>bulkResolve([...selected])}>✓ Resolve selected</button>
               <button className="btn btn-sm" onClick={()=>setEscalateIds([...selected])}>↗ Reassign selected</button>
             </div>
           )}
           {view.length===0 ? (
-            <div className="empty"><div className="empty-icon">👁</div><h3>Nothing being monitored</h3><p>Move a record here when you're waiting on something with no clear timeline yet.</p></div>
+            <div className="empty"><div className="empty-icon">💤</div><h3>Nothing snoozed</h3><p>Snooze a record when there's nothing to do until later — it'll resurface automatically.</p></div>
           ) : (
             <div className="tbl-wrap">
               <table>
-                <thead><tr><th style={{width:32}}></th><th>POC</th><th>CAMPAIGN</th><th>NOTE</th><th>LAST SEEN</th><th>ACTIONS</th></tr></thead>
+                <thead><tr><th style={{width:32}}></th><th>POC</th><th>CAMPAIGN</th><th>NOTE</th><th>RESURFACES</th><th>ACTIONS</th></tr></thead>
                 <tbody>
-                  {view.map(r=>(
+                  {view.map(r=>{
+                    const checking=checkingIds.has(r.id);
+                    return (
                     <tr key={r.id}>
                       <td><Chk checked={selected.has(r.id)} onChange={()=>toggle(r.id)}/></td>
                       <td><Cell onClick={()=>openPocDrawer(r)} clickable><div className="poc-name">{r.contacts?.name}</div><div className="poc-email">{r.contacts?.email||"—"}</div></Cell></td>
                       <td><Cell>{r.contacts?.campaign?<span className="campaign-pill" onClick={()=>setDrawer(r.contacts.campaign)}>{r.contacts.campaign} ↗</span>:"—"}<div><CategoryChip category={r.category} categories={categories}/></div></Cell></td>
                       <td><Cell><div style={{fontSize:12,color:"#6b7280",fontStyle:"italic",maxWidth:240}}>{r.message_notes||"—"}</div></Cell></td>
-                      <td><Cell><span style={{fontSize:12,color:"#9ca3af"}}>{r.last_action_at?new Date(r.last_action_at).toLocaleDateString():"—"}</span></Cell></td>
+                      <td><Cell><span style={{fontSize:12,color:"#9ca3af"}}>{r.snoozed_until?new Date(r.snoozed_until).toLocaleDateString():"—"}</span></Cell></td>
                       <td><Cell gap>
-                        <button className="btn btn-purple btn-sm" onClick={()=>bulkResolve([r.id])}>✓</button>
-                        <button className="btn btn-sm" onClick={()=>setEscalateIds([r.id])} title="Reassign to someone else">↗</button>
+                        <button className="btn btn-green btn-sm" disabled={checking} onClick={()=>checkReplies([r.id])} title="Check for reply">{checking?"…":"🔍"}</button>
+                        <button className="btn btn-orange btn-sm" disabled={busy.fu} onClick={()=>setFollowupChannelIds([r.id])} title="Send a manual follow-up (re-activates the record)">🔁</button>
+                        <button className="btn btn-purple btn-sm" onClick={()=>bulkResolve([r.id])} title="Mark resolved">✓</button>
                         <button className="btn btn-sm" onClick={()=>openPocDrawer(r)}>Details</button>
+                        <RowMenu items={[
+                          { label:"↗ Reassign", onClick:()=>setEscalateIds([r.id]) },
+                          { label:"✏ Edit contact", onClick:()=>setEditRec(r) },
+                        ]}/>
                       </Cell></td>
                     </tr>
-                  ))}
+                  );})}
                 </tbody>
               </table>
             </div>
@@ -623,10 +632,10 @@ export default function TrackerPage() {
                 <div className="drawer-section">
                   <div className="drawer-section-title">Quick Actions</div>
                   <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                    {["sent","active","no_reply","followup","stalled"].includes(pocDrawer.rec.status)&&(
+                    {["sent","active","no_reply","followup","stalled","snoozed"].includes(pocDrawer.rec.status)&&(
                       <button className="btn btn-green btn-sm" disabled={checkingIds.has(pocDrawer.rec.id)} onClick={()=>checkReplies([pocDrawer.rec.id])}>🔍 Check Reply</button>
                     )}
-                    {["active","no_reply","stalled","followup"].includes(pocDrawer.rec.status)&&(
+                    {["active","no_reply","stalled","followup","snoozed"].includes(pocDrawer.rec.status)&&(
                       <button className="btn btn-orange btn-sm" onClick={()=>{setFollowupChannelIds([pocDrawer.rec.id]);setPocDrawer(null);}}>🔁 Follow-up</button>
                     )}
                     <button className="btn btn-purple btn-sm" onClick={()=>patchOne(pocDrawer.rec.id,"resolved")}>✓ Resolve</button>

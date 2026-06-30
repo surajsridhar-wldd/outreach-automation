@@ -21,7 +21,7 @@ export async function POST(req) {
     const { data: rec } = await db.from("outreach_records")
       .select("*, contacts(*)").eq("id", id).eq("user_id", user.id).single();
 
-    if (!rec || !["active", "no_reply", "stalled", "sent", "followup"].includes(rec.status)) {
+    if (!rec || !["active", "no_reply", "stalled", "sent", "followup", "snoozed"].includes(rec.status)) {
       results.push({ id, ok: false, name: rec?.contacts?.name, error: "Not eligible for follow-up" }); continue;
     }
     if (rec.followups >= MAX_FOLLOWUPS) {
@@ -36,7 +36,9 @@ export async function POST(req) {
     const useChannel = channel || rec.channel; // default to original channel if not specified
 
     try {
-      const patch = { status: "followup", followups: n, last_action_at: new Date().toISOString() };
+      // Manually following up re-engages the record: move to 'followup' and clear any
+      // snooze so it returns to the active In-Flight flow (you chose to nudge them).
+      const patch = { status: "followup", followups: n, last_action_at: new Date().toISOString(), snoozed_until: null };
 
       if (useChannel === "email") {
         if (!c.email) throw new Error("No email address for this contact");
