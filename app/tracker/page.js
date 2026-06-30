@@ -345,7 +345,7 @@ export default function TrackerPage() {
                     {view.map(r=>(
                       <tr key={r.id}>
                         <td><Chk checked={selected.has(r.id)} onChange={()=>toggle(r.id)}/></td>
-                        <td><Cell><div className="poc-name">{r.contacts?.name}</div><div className="poc-email">{r.contacts?.email||<span style={{color:"#f97316",fontSize:11}}>No email — Slack only</span>}</div></Cell></td>
+                        <td><Cell><div className="poc-block"><div className="poc-name">{r.contacts?.name}</div><div className="poc-email">{r.contacts?.email||<span style={{color:"#f97316",fontSize:11}}>No email — Slack only</span>}</div></div></Cell></td>
                         <td><Cell>{r.contacts?.campaign?<span className="campaign-pill" onClick={()=>setDrawer(r.contacts.campaign)}>{r.contacts.campaign} ↗</span>:"—"}<div><CategoryChip category={r.category} categories={categories}/></div></Cell></td>
                         <td><Cell><div className="issue-text">{r.contacts?.issue}</div></Cell></td>
                         <td><Cell gap>
@@ -405,7 +405,7 @@ export default function TrackerPage() {
                     return (
                       <tr key={r.id}>
                         <td><Chk checked={selected.has(r.id)} onChange={()=>toggle(r.id)}/></td>
-                        <td><Cell onClick={()=>openPocDrawer(r)} clickable><div className="poc-name">{r.contacts?.name}</div><div className="poc-email">{r.contacts?.email||"—"}</div></Cell></td>
+                        <td><Cell onClick={()=>openPocDrawer(r)} clickable><div className="poc-block"><div className="poc-name">{r.contacts?.name}</div><div className="poc-email">{r.contacts?.email||"—"}</div></div></Cell></td>
                         <td><Cell>{r.contacts?.campaign?<span className="campaign-pill" onClick={()=>setDrawer(r.contacts.campaign)}>{r.contacts.campaign} ↗</span>:"—"}<div><CategoryChip category={r.category} categories={categories}/></div></Cell></td>
                         <td><Cell>
                           <Badge status={r.status}/>
@@ -518,7 +518,7 @@ export default function TrackerPage() {
                     return (
                     <tr key={r.id}>
                       <td><Chk checked={selected.has(r.id)} onChange={()=>toggle(r.id)}/></td>
-                      <td><Cell onClick={()=>openPocDrawer(r)} clickable><div className="poc-name">{r.contacts?.name}</div><div className="poc-email">{r.contacts?.email||"—"}</div></Cell></td>
+                      <td><Cell onClick={()=>openPocDrawer(r)} clickable><div className="poc-block"><div className="poc-name">{r.contacts?.name}</div><div className="poc-email">{r.contacts?.email||"—"}</div></div></Cell></td>
                       <td><Cell>{r.contacts?.campaign?<span className="campaign-pill" onClick={()=>setDrawer(r.contacts.campaign)}>{r.contacts.campaign} ↗</span>:"—"}<div><CategoryChip category={r.category} categories={categories}/></div></Cell></td>
                       <td><Cell><div style={{fontSize:12,color:"#6b7280",fontStyle:"italic",maxWidth:240}}>{r.message_notes||"—"}</div></Cell></td>
                       <td><Cell><span style={{fontSize:12,color:"#9ca3af"}}>{r.snoozed_until?new Date(r.snoozed_until).toLocaleDateString():"—"}</span></Cell></td>
@@ -562,7 +562,7 @@ export default function TrackerPage() {
                   {view.map(r=>(
                     <tr key={r.id}>
                       <td><Chk checked={selected.has(r.id)} onChange={()=>toggle(r.id)}/></td>
-                      <td><Cell onClick={()=>openPocDrawer(r)} clickable><div className="poc-name">{r.contacts?.name}</div><div className="poc-email">{r.contacts?.email||"—"}</div></Cell></td>
+                      <td><Cell onClick={()=>openPocDrawer(r)} clickable><div className="poc-block"><div className="poc-name">{r.contacts?.name}</div><div className="poc-email">{r.contacts?.email||"—"}</div></div></Cell></td>
                       <td><Cell>{r.contacts?.campaign?<span className="campaign-pill" onClick={()=>setDrawer(r.contacts.campaign)}>{r.contacts.campaign} ↗</span>:"—"}<div><CategoryChip category={r.category} categories={categories}/></div></Cell></td>
                       <td><Cell><Badge status={r.status}/>{r.message_notes&&<div style={{fontSize:11,color:"#6b7280",marginTop:4,fontStyle:"italic"}}>{r.message_notes}</div>}</Cell></td>
                       <td><Cell><span style={{fontSize:12,color:"#9ca3af"}}>{r.last_action_at?new Date(r.last_action_at).toLocaleDateString():"—"}</span></Cell></td>
