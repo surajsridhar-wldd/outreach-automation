@@ -14,7 +14,13 @@ import { getCategories } from "@/lib/categories";
 // SCOPE GUARD: every query is filtered to the selected category. Other categories
 // are never read or touched.
 
-const OPEN_STATUSES = ["sent", "active", "no_reply", "followup", "stalled", "needs_review", "pending"];
+// Open statuses considered during reconciliation. Includes In-Flight states AND
+// snoozed + needs_review (Review), so that:
+//   • a record that's snoozed/in-review but still matches an incoming row is NOT
+//     duplicated as a new record, and
+//   • a snoozed/review record ABSENT from a complete list gets auto-resolved (it
+//     was fixed while parked).
+const OPEN_STATUSES = ["sent", "active", "no_reply", "followup", "stalled", "needs_review", "snoozed", "pending"];
 
 function parseRows(text) {
   const firstLine = (text || "").split("\n")[0] || "";

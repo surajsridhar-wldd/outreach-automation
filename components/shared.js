@@ -370,11 +370,22 @@ export function ReconcileModal({ categories, onClose, onDone }) {
               <div style={{ marginBottom:16 }}>
                 <div style={{ fontSize:11, fontWeight:700, color:"#9ca3af", letterSpacing:1, textTransform:"uppercase", marginBottom:6 }}>Will be auto-resolved</div>
                 <div style={{ maxHeight:180, overflowY:"auto", border:"1px solid #fecaca", borderRadius:8 }}>
-                  {preview.toResolve.map(r => (
+                  {preview.toResolve.map(r => {
+                    const fromParked = r.status === "snoozed" || r.status === "needs_review";
+                    const label = r.status === "snoozed" ? "Snoozed" : r.status === "needs_review" ? "Review" : (SC[r.status]?.label || r.status);
+                    return (
                     <div key={r.id} style={{ padding:"8px 12px", borderBottom:"1px solid #fee2e2", fontSize:12 }}>
-                      <strong>{r.name}</strong> · {r.campaign} <div style={{ color:"#6b7280" }}>{r.issue}</div>
+                      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                        <strong>{r.name}</strong>
+                        <span style={{ color:"#9ca3af" }}>· {r.campaign}</span>
+                        <span style={{ marginLeft:"auto", fontSize:10, fontWeight:600, padding:"1px 7px", borderRadius:99,
+                          color: fromParked ? "#0e7490" : "#6b7280",
+                          background: fromParked ? "#ecfeff" : "#f3f4f6",
+                          border: fromParked ? "1px solid #a5f3fc" : "1px solid #e5e7eb" }}>{label}</span>
+                      </div>
+                      <div style={{ color:"#6b7280", marginTop:2 }}>{r.issue}</div>
                     </div>
-                  ))}
+                  );})}
                 </div>
               </div>
             )}
