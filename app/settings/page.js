@@ -57,6 +57,7 @@ export default function Settings() {
           if (res.updateError) diag.push(`db update: ${res.updateError}`);
           if (typeof res.tagFound === "number") diag.push(`found ${res.tagFound}`);
           if (typeof res.catsLoaded === "number") diag.push(`categories ${res.catsLoaded}`);
+          if (res.catDebug) diag.push(`catDebug ${JSON.stringify(res.catDebug)}`);
           if (typeof res.itemsWithIssue === "number") diag.push(`items w/ issue ${res.itemsWithIssue}`);
           if (res.sampleResult) diag.push(`sample ${res.sampleResult}`);
           setBackfillMsg(`⚠ Tagged 0. Diagnostics — ${diag.join(" · ") || "no info"}`);

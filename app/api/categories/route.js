@@ -1,10 +1,15 @@
 import { requireUser, unauthorized } from "@/lib/session";
 import { db } from "@/lib/supabase";
-import { getCategories } from "@/lib/categories";
+import { getCategories, getCategoriesDebug } from "@/lib/categories";
 
-export async function GET() {
+export async function GET(req) {
   const user = await requireUser();
   if (!user) return unauthorized();
+  const url = new URL(req.url);
+  if (url.searchParams.get("debug") === "1") {
+    const { categories, debug } = await getCategoriesDebug(user.id);
+    return Response.json({ categories, debug, userId: user.id });
+  }
   const categories = await getCategories(user.id);
   return Response.json({ categories });
 }

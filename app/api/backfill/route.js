@@ -1,7 +1,7 @@
 import { requireUser, unauthorized } from "@/lib/session";
 import { db, logEvent } from "@/lib/supabase";
 import { categorizeIssuesBatch } from "@/lib/claude";
-import { getCategories } from "@/lib/categories";
+import { getCategories, getCategoriesDebug } from "@/lib/categories";
 import { checkOneRecord } from "@/lib/checker";
 
 export const maxDuration = 300; // up to 5 min on Vercel
@@ -61,8 +61,9 @@ export async function POST(req) {
     const byUser = {};
     for (const r of untagged || []) (byUser[r.user_id] ||= []).push(r);
     for (const [uid, recs] of Object.entries(byUser)) {
-      const cats = await getCategories(uid);
+      const { categories: cats, debug: catDebug } = await getCategoriesDebug(uid);
       result.catsLoaded = (result.catsLoaded || 0) + cats.length;
+      result.catDebug = catDebug;
       if (!cats.length) { result.tagError = `no categories for user ${uid}`; continue; }
       const items = recs.map(r => ({ id: r.id, campaign: r.contacts?.campaign, issue: r.contacts?.issue })).filter(it => it.issue);
       result.itemsWithIssue = (result.itemsWithIssue || 0) + items.length;
