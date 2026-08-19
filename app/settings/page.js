@@ -22,6 +22,9 @@ export default function Settings() {
   }, []);
   function show(m) { setToast(m); setTimeout(() => setToast(null), 4000); }
 
+  const [recatMsg, setRecatMsg] = useState("");
+  const [recatBusy, setRecatBusy] = useState(false);
+
   async function addCategory() {
     if (!newCat.tag.trim() || !newCat.name.trim()) return;
     setCatBusy(true);
@@ -30,7 +33,23 @@ export default function Settings() {
     if (r.error) return show("⚠ " + r.error);
     setCategories(c => [...c, r.category]);
     setNewCat({ tag:"", name:"", description:"", done_definition:"", is_time_sensitive:false });
-    show("✅ Category added");
+    show("✅ Category added — click 'Re-check uncategorized' below to see if existing records now fit it");
+  }
+  async function runRecategorize(scope) {
+    setRecatBusy(true);
+    setRecatMsg(scope==="all" ? "Re-checking ALL records against your current categories…" : "Re-checking uncategorized records…");
+    try {
+      let guard = 0, totalTagged = 0, totalChanged = 0;
+      while (guard++ < 20) {
+        const res = await fetch("/api/recategorize", { method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({ scope }) }).then(r=>r.json());
+        if (!res || res.error) { setRecatMsg("⚠ " + (res?.error||"Failed")); break; }
+        totalTagged += res.tagged||0; totalChanged += res.changed||0;
+        setRecatMsg(`Checked ${totalTagged}, ${totalChanged} now categorized… ${res.remaining} remaining`);
+        if ((res.remaining||0) === 0 || (res.tagged||0) === 0) break;
+      }
+      setRecatMsg(m => m.startsWith("⚠") ? m : `✓ Done — ${totalChanged} record(s) newly categorized.`);
+    } catch (e) { setRecatMsg("⚠ " + e.message); }
+    setRecatBusy(false);
   }
   async function deleteCategory(id) {
     await fetch("/api/categories", { method:"DELETE", headers:{"content-type":"application/json"}, body:JSON.stringify({ id }) });
@@ -181,6 +200,18 @@ export default function Settings() {
             <label htmlFor="ts">Time-sensitive (has a hard deadline like month-end)</label>
           </div>
           <button className="btn btn-primary btn-sm" disabled={catBusy||!newCat.tag.trim()||!newCat.name.trim()} onClick={addCategory}>{catBusy?"Adding…":"Add category"}</button>
+        </div>
+
+        <div style={{ marginTop:16, background:"#fffbeb", border:"1px solid #fde68a", borderRadius:8, padding:14 }}>
+          <div style={{ fontWeight:600, fontSize:13, marginBottom:6 }}>Re-check categorization</div>
+          <p style={{ fontSize:12, color:"#92400e", marginBottom:10 }}>
+            Once a record has been checked against your categories, it's normally never re-checked automatically — so adding a NEW category later won't retroactively apply to older records unless you re-check them here.
+          </p>
+          <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
+            <button className="btn btn-sm" disabled={recatBusy} onClick={()=>runRecategorize("uncategorized")}>{recatBusy?"Checking…":"Re-check uncategorized records"}</button>
+            <button className="btn btn-sm" disabled={recatBusy} onClick={()=>runRecategorize("all")}>{recatBusy?"Checking…":"Re-check ALL records"}</button>
+          </div>
+          {recatMsg && <div style={{ fontSize:12, color:"#92400e", marginTop:8 }}>{recatMsg}</div>}
         </div>
       </div>
 
