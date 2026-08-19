@@ -55,6 +55,9 @@ export default function Settings() {
         `reopened: ${d.reopenedCount ?? "?"}`,
         `found: ${d.recordsFetched ?? "?"}`,
         `with issue text: ${d.itemsWithIssue ?? "?"}`,
+        `LLM-processed & saved: ${d.tagged ?? "?"}`,
+        d.missingResult ? `⚠ ${d.missingResult} item(s) had NO result from the LLM call at all (id-matching bug, not a real judgment)` : null,
+        `sample LLM result for one record: ${d.sampleResult ?? "?"}`,
         d.categorizeError ? `categorize error: ${d.categorizeError}` : null,
         d.updateError ? `update error: ${d.updateError}` : null,
       ].filter(Boolean).join(" · ") : "no diagnostics returned";

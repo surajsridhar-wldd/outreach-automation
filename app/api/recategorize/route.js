@@ -70,10 +70,10 @@ export async function POST(req) {
   }
   diag.sampleResult = results[items[0].id] ? JSON.stringify(results[items[0].id]) : "none";
 
-  let tagged = 0, changed = 0, updateErrorSample = null;
+  let tagged = 0, changed = 0, updateErrorSample = null, missingResult = 0;
   for (const it of items) {
     const res = results[it.id];
-    if (!res) continue;
+    if (!res) { missingResult++; continue; }
     const { error: upErr } = await db.from("outreach_records").update({
       category: res.tag, category_confidence: res.confidence,
     }).eq("id", it.id);
@@ -84,6 +84,8 @@ export async function POST(req) {
       await logEvent({ outreachId: it.id, userId: user.id, action: "category_tagged", payload: { category: res.tag, confidence: res.confidence, recategorized: true } });
     }
   }
+  diag.tagged = tagged;
+  diag.missingResult = missingResult; // items for which categorizeIssuesBatch returned no entry at all — a code-level bug, distinct from a genuine tag:null judgment
   if (updateErrorSample) diag.updateError = updateErrorSample;
 
   const { count: remaining } = await db.from("outreach_records")
