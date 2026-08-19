@@ -13,12 +13,11 @@ export const maxDuration = 120;
 //
 // scope:
 //   "uncategorized" (default) — only records with no category (tag was null last time).
-//                                Cheapest, matches the common case: you added a new
-//                                category and want the "doesn't fit anything" pile
-//                                re-checked against it.
-//   "all"                     — re-check every record, including ones that already
-//                                have a category (in case a category's description
-//                                changed enough to change the right answer). Heavier.
+//   "all"                     — re-check every record, including already-tagged ones.
+//
+// Returns full diagnostics (reopened count, items found, categories used, sample
+// result, any error) so a "0 categorized" result is explainable instead of a
+// dead end — same principle as the backfill/tag-pending diagnostics.
 
 export async function POST(req) {
   const user = await requireUser();
@@ -28,19 +27,24 @@ export async function POST(req) {
   const scope = body.scope === "all" ? "all" : "uncategorized";
   const limit = body.limit || 150;
 
-  const categories = await getCategories(user.id);
-  if (!categories.length) return Response.json({ error: "No categories defined" }, { status: 400 });
+  const diag = { scope, userId: user.id };
 
-  // Step 1: re-open eligible records by clearing category_confidence (and category,
-  // for the "all" scope) so the normal tagging query would pick them up again.
+  const categories = await getCategories(user.id);
+  diag.categoriesLoaded = categories.length;
+  diag.categoryTags = categories.map(c => c.tag);
+  if (!categories.length) return Response.json({ error: "No categories defined", diag }, { status: 400 });
+
+  // Step 1: re-open eligible records. Use .select("id") on the update so we can
+  // report exactly how many rows it actually touched, instead of assuming.
   let reopenQuery = db.from("outreach_records")
     .update({ category_confidence: null, ...(scope === "all" ? { category: null } : {}) })
     .eq("user_id", user.id)
     .neq("status", "resolved").neq("status", "escalated");
 
   reopenQuery = scope === "all" ? reopenQuery : reopenQuery.is("category", null);
-  const { error: reopenErr } = await reopenQuery;
-  if (reopenErr) return Response.json({ error: reopenErr.message }, { status: 500 });
+  const { data: reopened, error: reopenErr } = await reopenQuery.select("id");
+  if (reopenErr) return Response.json({ error: reopenErr.message, diag }, { status: 500 });
+  diag.reopenedCount = (reopened || []).length;
 
   // Step 2: fetch and tag them now (same batched approach as /api/tag-pending).
   const { data: recs, error } = await db.from("outreach_records")
@@ -49,28 +53,38 @@ export async function POST(req) {
     .is("category", null).is("category_confidence", null)
     .neq("status", "resolved").neq("status", "escalated")
     .limit(limit);
-  if (error) return Response.json({ error: error.message }, { status: 500 });
+  if (error) return Response.json({ error: error.message, diag }, { status: 500 });
 
+  diag.recordsFetched = (recs || []).length;
   const items = (recs || []).map(r => ({ id: r.id, campaign: r.contacts?.campaign, issue: r.contacts?.issue })).filter(it => it.issue);
-  if (!items.length) return Response.json({ tagged: 0, changed: 0, remaining: 0 });
+  diag.itemsWithIssue = items.length;
 
-  const results = await categorizeIssuesBatch({ items, categories });
+  if (!items.length) return Response.json({ tagged: 0, changed: 0, remaining: 0, diag });
 
-  let tagged = 0, changed = 0;
+  let results;
+  try {
+    results = await categorizeIssuesBatch({ items, categories });
+  } catch (e) {
+    diag.categorizeError = e.message;
+    return Response.json({ tagged: 0, changed: 0, remaining: items.length, diag }, { status: 200 });
+  }
+  diag.sampleResult = results[items[0].id] ? JSON.stringify(results[items[0].id]) : "none";
+
+  let tagged = 0, changed = 0, updateErrorSample = null;
   for (const it of items) {
     const res = results[it.id];
     if (!res) continue;
     const { error: upErr } = await db.from("outreach_records").update({
       category: res.tag, category_confidence: res.confidence,
     }).eq("id", it.id);
-    if (!upErr) {
-      tagged++;
-      if (res.tag) {
-        changed++;
-        await logEvent({ outreachId: it.id, userId: user.id, action: "category_tagged", payload: { category: res.tag, confidence: res.confidence, recategorized: true } });
-      }
+    if (upErr) { updateErrorSample = updateErrorSample || upErr.message; continue; }
+    tagged++;
+    if (res.tag) {
+      changed++;
+      await logEvent({ outreachId: it.id, userId: user.id, action: "category_tagged", payload: { category: res.tag, confidence: res.confidence, recategorized: true } });
     }
   }
+  if (updateErrorSample) diag.updateError = updateErrorSample;
 
   const { count: remaining } = await db.from("outreach_records")
     .select("id", { count: "exact", head: true })
@@ -78,5 +92,5 @@ export async function POST(req) {
     .is("category", null).is("category_confidence", null)
     .neq("status", "resolved").neq("status", "escalated");
 
-  return Response.json({ tagged, changed, remaining: remaining || 0 });
+  return Response.json({ tagged, changed, remaining: remaining || 0, diag });
 }

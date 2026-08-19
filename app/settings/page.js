@@ -42,12 +42,29 @@ export default function Settings() {
       let guard = 0, totalTagged = 0, totalChanged = 0;
       while (guard++ < 20) {
         const res = await fetch("/api/recategorize", { method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({ scope }) }).then(r=>r.json());
-        if (!res || res.error) { setRecatMsg("⚠ " + (res?.error||"Failed")); break; }
+        if (!res || res.error) { setRecatMsg("⚠ " + (res?.error||"Failed") + (res?.diag?` · ${JSON.stringify(res.diag)}`:"")); break; }
         totalTagged += res.tagged||0; totalChanged += res.changed||0;
+
+        // If a pass processed 0 items (or 0 got tagged with nothing left to explain
+        // why), show the diagnostics instead of just looping/stopping silently.
+        if ((res.diag?.itemsWithIssue||0) === 0 || (res.diag?.categorizeError)) {
+          const d = res.diag || {};
+          const parts = [
+            `categories: ${d.categoriesLoaded ?? "?"} (${(d.categoryTags||[]).join(", ")})`,
+            `reopened: ${d.reopenedCount ?? "?"}`,
+            `found: ${d.recordsFetched ?? "?"}`,
+            `with issue text: ${d.itemsWithIssue ?? "?"}`,
+          ];
+          if (d.categorizeError) parts.push(`categorize error: ${d.categorizeError}`);
+          if (d.updateError) parts.push(`update error: ${d.updateError}`);
+          setRecatMsg(`${totalChanged===0 && totalTagged===0 ? "⚠ Nothing changed." : "✓ Done."} Diagnostics — ${parts.join(" · ")}`);
+          break;
+        }
+
         setRecatMsg(`Checked ${totalTagged}, ${totalChanged} now categorized… ${res.remaining} remaining`);
         if ((res.remaining||0) === 0 || (res.tagged||0) === 0) break;
       }
-      setRecatMsg(m => m.startsWith("⚠") ? m : `✓ Done — ${totalChanged} record(s) newly categorized.`);
+      setRecatMsg(m => (m.startsWith("⚠")||m.includes("Diagnostics")) ? m : `✓ Done — ${totalChanged} record(s) newly categorized.`);
     } catch (e) { setRecatMsg("⚠ " + e.message); }
     setRecatBusy(false);
   }
