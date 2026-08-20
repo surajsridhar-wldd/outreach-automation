@@ -49,6 +49,7 @@ export default function TrackerPage() {
   const [showReconcile, setShowReconcile] = useState(false);
   const [snoozeIds, setSnoozeIds]   = useState(null);
   const [categories, setCategories] = useState([]);
+  const [catPickerOpen, setCatPickerOpen] = useState(false);
 
   const loadTab = useCallback(async (t) => {
     const tabDef = TABS.find(x => x.id === t);
@@ -229,6 +230,16 @@ export default function TrackerPage() {
     setSelected(new Set()); show("🗑 Deleted"); reload();
   }
 
+  async function bulkSetCategory(ids, category) {
+    setBusy(b=>({...b, cat:true}));
+    await fetch("/api/outreach/bulk-update",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({ids,action:"set_category",payload:{category}})});
+    setBusy(b=>({...b, cat:false}));
+    setCatPickerOpen(false); setSelected(new Set());
+    const catName = categories.find(c=>c.tag===category)?.name || category;
+    show(category ? `🏷️ Tagged ${ids.length} as "${catName}" — no AI used` : `Cleared category on ${ids.length}`);
+    reload();
+  }
+
   // Tab-specific selectable set
   const selCheckable  = [...selected].filter(id=>["sent","active","no_reply","followup","stalled"].includes(currentRecs.find(r=>r.id===id)?.status));
   const selNoReply    = [...selected].filter(id=>["active","no_reply","stalled","followup"].includes(currentRecs.find(r=>r.id===id)?.status));
@@ -336,6 +347,28 @@ export default function TrackerPage() {
                   <button className={`ch-btn ${channel==="email"?"active":""}`} onClick={()=>setChannel("email")}>📧 Email</button>
                 </div>
                 {selPending.length>0 && <button className="btn btn-primary btn-sm" disabled={busy.send||tagging==="running"} onClick={bulkSend} title={tagging==="running"?"Wait for categorization to finish":""}>{busy.send?"Sending…":tagging==="running"?"Checking…":`Send ${selPending.length}`}</button>}
+                <span style={{position:"relative"}}>
+                  <button className="btn btn-sm" disabled={busy.cat} onClick={()=>setCatPickerOpen(o=>!o)} title="Manually set category — no AI call, no credits used">🏷️ Set category</button>
+                  {catPickerOpen && (
+                    <div style={{position:"absolute",top:"100%",left:0,marginTop:4,background:"#fff",border:"1px solid #e5e7eb",borderRadius:8,boxShadow:"0 4px 16px rgba(0,0,0,.1)",zIndex:50,minWidth:220,padding:6}}>
+                      {categories.length===0 && <div style={{padding:"8px 10px",fontSize:12,color:"#9ca3af"}}>No categories defined yet — add some in Settings.</div>}
+                      {categories.map(c=>(
+                        <button key={c.tag} onClick={()=>bulkSetCategory([...selected], c.tag)}
+                          style={{display:"block",width:"100%",textAlign:"left",padding:"8px 10px",fontSize:13,border:"none",background:"none",cursor:"pointer",borderRadius:6}}
+                          onMouseEnter={e=>e.currentTarget.style.background="#f3f4f6"} onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                          {c.name}
+                        </button>
+                      ))}
+                      <div style={{borderTop:"1px solid #f3f4f6",marginTop:4,paddingTop:4}}>
+                        <button onClick={()=>bulkSetCategory([...selected], "")}
+                          style={{display:"block",width:"100%",textAlign:"left",padding:"8px 10px",fontSize:13,color:"#9ca3af",border:"none",background:"none",cursor:"pointer",borderRadius:6}}
+                          onMouseEnter={e=>e.currentTarget.style.background="#f3f4f6"} onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                          Clear category
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </span>
                 <button className="btn btn-red btn-sm" style={{ marginLeft:"auto" }} onClick={()=>bulkDelete([...selected])}>🗑 Delete</button>
               </BulkBar>
               <div className="tbl-wrap">

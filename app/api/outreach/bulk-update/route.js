@@ -173,6 +173,19 @@ export async function POST(req) {
           if (upErr) throw new Error(upErr.message);
           await logEvent({ outreachId: id, userId: user.id, action: "status_changed", prevStatus: rec.status, newStatus, payload });
           results.push({ id, ok: true });
+
+        } else if (action === "set_category") {
+          // Manual, direct category assignment — no AI call, no credits used. For
+          // when the user already knows a batch of records is a single category
+          // (e.g. they were all imported from one source) and wants to skip the
+          // LLM tagger entirely, or when Anthropic credits are unavailable.
+          const category = payload?.category === "" ? null : (payload?.category || null);
+          const { error: upErr } = await db.from("outreach_records").update({
+            category, category_confidence: category ? 1 : null, last_action_at: new Date().toISOString(),
+          }).eq("id", id);
+          if (upErr) throw new Error(upErr.message);
+          await logEvent({ outreachId: id, userId: user.id, action: "category_tagged", payload: { category, manual: true } });
+          results.push({ id, ok: true });
         }
       }
     } catch (e) {
