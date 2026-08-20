@@ -3,6 +3,7 @@ import { db, logEvent } from "@/lib/supabase";
 import { lookupByEmail, lookupByName, openDm, sendDm } from "@/lib/slack";
 import { sendEmail } from "@/lib/gmail";
 import { outreachSubject, outreachBody, slackOutreach, bundledOutreachSubject, bundledOutreachBody, slackBundledOutreach } from "@/lib/templates";
+import { ccForCategory } from "@/lib/emailRules";
 import { keyOf } from "@/lib/matching";
 import crypto from "crypto";
 
@@ -77,6 +78,7 @@ async function sendSingle(rec, user, channel, results) {
       if (!c.email) throw new Error("No email address for this contact");
       const { messageId, threadId } = await sendEmail(user, {
         to: c.email, subject: outreachSubject(c), body: outreachBody(c, user.name || "Operations Team"),
+        cc: ccForCategory(rec.category),
       });
       patch.gmail_message_id = messageId;
       patch.gmail_thread_id = threadId;
@@ -113,10 +115,16 @@ async function sendBundled(group, user, channel, results) {
 
     if (channel === "email") {
       if (!c0.email) throw new Error("No email address for this contact");
+      // If ANY issue in the bundle needs a category CC, include it on the whole
+      // message (they need visibility into their part of it either way).
+      const bundleCc = [...new Set(
+        group.map(r => ccForCategory(r.category)).filter(Boolean).flatMap(s => s.split(", "))
+      )].join(", ") || undefined;
       const { messageId, threadId } = await sendEmail(user, {
         to: c0.email,
         subject: bundledOutreachSubject(c0.name, items.length),
         body: bundledOutreachBody(c0.name, items, user.name || "Operations Team"),
+        cc: bundleCc,
       });
       patch.gmail_message_id = messageId;
       patch.gmail_thread_id = threadId;

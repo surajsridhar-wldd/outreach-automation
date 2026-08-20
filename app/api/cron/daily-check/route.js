@@ -3,6 +3,7 @@ import { checkOneRecord } from "@/lib/checker";
 import { sendDm } from "@/lib/slack";
 import { sendEmail } from "@/lib/gmail";
 import { followupBody, slackFollowup, outreachSubject } from "@/lib/templates";
+import { ccForCategory } from "@/lib/emailRules";
 import { categorizeIssuesBatch } from "@/lib/claude";
 import { getCategories } from "@/lib/categories";
 
@@ -82,7 +83,7 @@ export async function GET(req) {
         const n = rec.followups + 1;
         try {
           if (rec.channel === "email") {
-            await sendEmail(owner, { to: c.email, subject: "Re: " + outreachSubject(c), body: followupBody(c, owner.name, n) });
+            await sendEmail(owner, { to: c.email, subject: "Re: " + outreachSubject(c), body: followupBody(c, owner.name, n), cc: ccForCategory(rec.category) });
           } else {
             const sent = await sendDm(owner, rec.slack_channel_id, slackFollowup(c, n));
             if (sent.ok) {

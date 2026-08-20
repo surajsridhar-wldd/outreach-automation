@@ -3,6 +3,7 @@ import { db, logEvent } from "@/lib/supabase";
 import { sendDm, lookupByEmail, lookupByName, openDm } from "@/lib/slack";
 import { sendEmail } from "@/lib/gmail";
 import { followupBody, slackFollowup, outreachSubject } from "@/lib/templates";
+import { ccForCategory } from "@/lib/emailRules";
 
 const MAX_FOLLOWUPS = 3;
 
@@ -46,6 +47,7 @@ export async function POST(req) {
           to: c.email,
           subject: "Re: " + outreachSubject(c),
           body: followupBody(c, user.name || "Operations Team", n),
+          cc: ccForCategory(rec.category),
         });
         // If switching from slack→email mid-flow, set up email anchors for future checks
         if (rec.channel !== "email") {

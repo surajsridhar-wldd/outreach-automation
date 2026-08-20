@@ -4,6 +4,7 @@ import { checkOneRecord } from "@/lib/checker";
 import { lookupByEmail, lookupByName, openDm, sendDm } from "@/lib/slack";
 import { sendEmail } from "@/lib/gmail";
 import { outreachSubject, outreachBody, slackOutreach } from "@/lib/templates";
+import { ccForCategory } from "@/lib/emailRules";
 
 export async function POST(req) {
   const user = await requireUser();
@@ -95,6 +96,7 @@ export async function POST(req) {
               contact_id: newContact.id,
               user_id: user.id,
               status: "pending",
+              category: rec.category, category_confidence: rec.category ? 1 : null,
             }).select("id").single();
             if (oErr) throw new Error(`Failed to create outreach record: ${oErr.message}`);
 
@@ -117,6 +119,7 @@ export async function POST(req) {
                   to: toEmail,
                   subject: outreachSubject(newC),
                   body: outreachBody(newC, user.name || "Operations Team"),
+                  cc: ccForCategory(rec.category),
                 });
                 patch.gmail_message_id = messageId;
                 patch.gmail_thread_id = threadId;
