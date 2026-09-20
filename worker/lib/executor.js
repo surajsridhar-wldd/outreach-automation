@@ -52,6 +52,7 @@ export async function executePlan({
 
   for (const m of plan.messages) {
     const person = people.get(m.recipientId);
+    if (person?.unreachable_at) { stats.skippedUnreachable = (stats.skippedUnreachable || 0) + 1; continue; }
     if (!person?.email) {
       stats.skippedNoEmail++;
       await store.addReviewItem({ kind: 'needs_owner', note: `No email address on file for DMS user ${m.recipientId}` });
@@ -61,7 +62,7 @@ export async function executePlan({
 
     const items = m.items.map((it) => {
       const issue = issuesById.get(it.issueId);
-      return { ...it, ...issue, issueId: it.issueId, claimedDone: !!issue?.claimedDone };
+      return { ...it, ...issue, issueId: it.issueId, claimedDone: !!(issue?.claimedDone || issue?.claimed_done_at) };
     });
     const built = buildEmail(items, {
       name: person.name, senderName: settings.senderName, kind: m.kind, final: m.final,
@@ -128,6 +129,12 @@ export async function executePlan({
       issues: m.items.map((it) => ({ id: it.issueId, nudgeCount: issuesById.get(it.issueId)?.nudge_count ?? 0 })),
       recipientIds: [m.recipientId], deferredIds: [], nowIso,
     });
+
+    // "Done" claims that Mongo does not confirm are counted; the second one goes to the human queue.
+    for (const it of items.filter((i) => i.claimedDone)) {
+      const n = await store.recordFalseDone?.(it.issueId);
+      if (n >= 2) await store.addReviewItem({ kind: 'false_done_twice', issue_id: it.issueId, note: `${person.name} has said "done" twice for ${it.campaign_name}, but DMS still shows it as pending.` });
+    }
 
     // One short Slack ping, at the 3rd nudge only, pointing back to the email. A failure here never
     // affects the email that already went out.

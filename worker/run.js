@@ -13,6 +13,8 @@ import { istDate } from './lib/time.js';
 import { makeAppSender } from './lib/appSender.js';
 import { threadingSelfTest, slackSelfTest } from './lib/selfTest.js';
 import { fetchTeamRows, makeManagerResolver, overlayManagers } from './lib/teamSheet.js';
+import { readReplies } from './lib/replies.js';
+import { interpretReply } from './lib/llm.js';
 import * as S from './lib/store.js';
 import { writeFileSync, appendFileSync } from 'node:fs';
 
@@ -44,7 +46,9 @@ export async function main(env = process.env) {
   const db = S.makeDb(env);
   const realNow = new Date();
   const settings = await S.loadSettings(db);
-  const mode = effectiveMode(env.RUN_MODE || null, settings.mode || 'shadow');
+  // Paused = nothing can reach a person. The run still syncs and drafts so the website stays current.
+  const paused = settings.paused === true;
+  const mode = paused ? 'shadow' : effectiveMode(env.RUN_MODE || null, settings.mode || 'shadow');
   const now = resolveNow(env.AS_OF || null, mode, realNow);
   const runId = await S.startRun(db, { mode, trigger: env.GITHUB_EVENT_NAME || 'manual' });
   const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 20000 });
@@ -53,6 +57,20 @@ export async function main(env = process.env) {
   try {
     // Sends left unconfirmed by a run that died are flagged for the owner, never silently repeated.
     const recovered = await S.recoverStale(db);
+
+    // 0. Read replies first, so a hold or a co-owner given this morning is respected by today's plan.
+    // Only in live/canary (replies only exist for real messages) and never fatal to the run.
+    let replyStats = null;
+    if ((mode === 'live' || mode === 'canary') && env.ANTHROPIC_API_KEY && makeSender()) {
+      try {
+        const [preIssues, prePeople] = await Promise.all([S.loadOpenIssues(db), S.loadPeople(db)]);
+        const senderForReplies = await S.loadSender(db, settings.sender_user_email);
+        replyStats = await readReplies({
+          store: S.replyStore(db), senders: makeSender(), interpret: interpretReply, apiKey: env.ANTHROPIC_API_KEY, now: realNow, settings,
+          people: prePeople, issuesById: new Map(preIssues.map((r) => [r.id, r])), senderEmail: senderForReplies.gmail_address, log: console.log,
+        });
+      } catch (e) { replyStats = { error: e.message }; }
+    } else if (mode === 'live' || mode === 'canary') replyStats = { skipped: env.ANTHROPIC_API_KEY ? 'no sender' : 'ANTHROPIC_API_KEY not set' };
 
     // 1. Read Mongo (read-only) and mirror it into `issues`.
     await mongo.connect();
@@ -134,6 +152,8 @@ export async function main(env = process.env) {
     if (diff.suspectCategories.length) notes.push(`Bad-read guard tripped: ${JSON.stringify(diff.suspectCategories)}. Nothing cleared or sent for those categories.`);
     if (teamSheet.error) notes.push(`Team sheet could not be read (${teamSheet.error}); managers fell back to DMS cohort/pod leads.`);
     if (exec.failed) notes.push(`${exec.failed} email(s) failed to send. See the review list.`);
+    if (replyStats?.error) notes.push(`Reply reading failed (${replyStats.error}); replies will be picked up next run.`);
+    if (replyStats?.llmErrors) notes.push(`${replyStats.llmErrors} repl(y/ies) could not be read by the model; they will be retried.`);
     if (recovered) notes.push(`${recovered} earlier send(s) could not be confirmed. Please check the Sent folder.`);
     if (selfTest && !selfTest.threading?.threaded) notes.push(`Threading self-test FAILED: ${JSON.stringify(selfTest.threading)}`);
     if (selfTest && !selfTest.slack?.ok) notes.push(`Slack self-test failed: ${selfTest.slack?.error || 'unknown'}`);
@@ -145,7 +165,7 @@ export async function main(env = process.env) {
       ...exec, today: plan.today, nudgeDay: plan.nudgeDay, monthEnd: plan.monthEnd, weeklySlot: plan.weeklySlot,
       issuesOpen: openRows.length, inserted: diff.toInsert.length, updated: diff.toUpdate.length, cleared: diff.toClear.length,
       orphans: orphans.length, suspectCategories: diff.suspectCategories, excluded: plan.excluded, planCounts: plan.counts,
-      recoveredStale: recovered, selfTest, notes, teamSheet,
+      recoveredStale: recovered, selfTest, notes, teamSheet, paused, replyStats,
     };
     await S.finishRun(db, runId, { ok: true, stats });
     await report({ db, runId, stats, plan });
@@ -167,7 +187,7 @@ async function report({ db, runId, stats, plan }) {
   const { data: msgs } = await db.from('messages_out').select('recipient_dms_user_id,channel,lane,kind,status,to_address,intended_to,subject,body,mode').eq('run_id', runId).order('created_at');
   const rows = msgs || [];
   const summary = [
-    `## Nudge run: ${stats.mode} (${stats.today})`,
+    `## Nudge run: ${stats.mode}${stats.paused ? ' (PAUSED)' : ''} (${stats.today})`,
     `Nudge day: **${stats.nudgeDay}**, month-end window: **${stats.monthEnd}**, weekly slot: ${stats.weeklySlot}`,
     `Issues open: **${stats.issuesOpen}** (new ${stats.inserted}, updated ${stats.updated}, cleared ${stats.cleared}, orphans ${stats.orphans})`,
     `Planned messages: **${stats.planned}** (lane A ${plan.counts.laneA}, deferred ${plan.counts.laneADeferred}, lane B ${plan.counts.laneB})`,
@@ -175,6 +195,7 @@ async function report({ db, runId, stats, plan }) {
     stats.suspectCategories?.length ? `Bad-read guard tripped: ${JSON.stringify(stats.suspectCategories)}` : '',
     stats.selfTest ? `Self-test: threading ${stats.selfTest.threading?.threaded ? 'OK' : 'FAILED'}, Slack ${stats.selfTest.slack?.ok ? 'OK' : `failed (${stats.selfTest.slack?.error})`}` : '',
     stats.teamSheet ? `Managers: ${stats.teamSheet.used ? `sheet answered for ${stats.teamSheet.fromSheet} of ${stats.teamSheet.people} people (agrees with DMS ${stats.teamSheet.agreeWithDms}, differs ${stats.teamSheet.differFromDms}); statuses ${JSON.stringify(stats.teamSheet.byStatus)}` : `sheet NOT used${stats.teamSheet.error ? ` (${stats.teamSheet.error})` : ' (not configured)'}; DMS cohort/pod leads only`}` : '',
+    stats.replyStats ? `Replies: ${JSON.stringify(stats.replyStats)}` : '',
     stats.notes?.length ? `Needs attention: ${stats.notes.join(' | ')}` : '',
   ].filter(Boolean).join('\n\n');
   const full = `${summary}\n\n---\n\n${rows.map((m) => `### ${m.channel} to ${m.intended_to || m.to_address || m.recipient_dms_user_id} (${m.status}, lane ${m.lane}, ${m.kind})\n**${m.subject || ''}**\n\n${m.body}\n`).join('\n')}`;
