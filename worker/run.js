@@ -74,8 +74,10 @@ export async function main(env = process.env) {
 
     // 1. Read Mongo (read-only) and mirror it into `issues`.
     await mongo.connect();
-    const { issues: fetched, orphans, manualVerify } = await fetchOpenIssues(mongo.db('test'), realNow, { log: console.log });
-    for (const z of manualVerify || []) await S.addReviewItem(db, { kind: 'low_confidence', note: 'Zero-cost service needs a manual check (AI or Chiraiya, no clear done-by-our-team note): ' + z.campaign_name + ', ' + z.service + '. Note: ' + z.note });
+    const zeroDecisions = await S.loadZeroCostDecisions(db);
+    const { issues: fetched, orphans, manualVerify, zeroExcluded } = await fetchOpenIssues(mongo.db('test'), realNow, { log: console.log, zeroDecisions });
+    let zeroRaised = 0;
+    for (const z of manualVerify || []) if (await S.addManualVerifyOnce(db, z)) zeroRaised++;
     const existingOpen = await S.loadOpenIssues(db);
     const diff = diffIssues(existingOpen, fetched);
     // Reporting lines: the company team sheet is the most up-to-date source; DMS cohort/pod leads are the
@@ -167,6 +169,7 @@ export async function main(env = process.env) {
       issuesOpen: openRows.length, inserted: diff.toInsert.length, updated: diff.toUpdate.length, cleared: diff.toClear.length,
       orphans: orphans.length, suspectCategories: diff.suspectCategories, excluded: plan.excluded, planCounts: plan.counts,
       recoveredStale: recovered, selfTest, notes, teamSheet, paused, replyStats,
+      zeroCost: { action: fetched.filter((i) => i.category === 'zero_cost_services').length, autoExcluded: (zeroExcluded || []).filter((z) => z.why !== 'owner decision'), decidedExcluded: (zeroExcluded || []).filter((z) => z.why === 'owner decision').length, needsCheck: (manualVerify || []).length, newlyRaised: zeroRaised },
     };
     await S.finishRun(db, runId, { ok: true, stats });
     await report({ db, runId, stats, plan });

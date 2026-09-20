@@ -113,7 +113,7 @@ async function aggregateWithFallback(collection, pipeline, options, log) {
  *   issues  - one row per (category, campaign) that is pending, with owner state resolved
  *   orphans - pending rows whose campaign no longer exists (cannot be attributed to anyone)
  */
-export async function fetchOpenIssues(db, now = new Date(), { log } = {}) {
+export async function fetchOpenIssues(db, now = new Date(), { log, zeroDecisions = new Map() } = {}) {
   const today = utcDate(now);
   const perCampaignCounts = {
     [CATEGORY.INVOICE]: await db.collection('invoices').aggregate(invoiceApprovalPipeline()).toArray(),
@@ -138,7 +138,7 @@ export async function fetchOpenIssues(db, now = new Date(), { log } = {}) {
   remember(zeroCampaigns);
   const clientIds = [...new Set(zeroCampaigns.map((c) => c.client_id).filter(Boolean))];
   const clientRows = clientIds.length ? await db.collection('clients').find({ client_id: { $in: clientIds } }, { projection: { _id: 0, client_id: 1, name: 1 } }).toArray() : [];
-  const zero = classifyZeroCost(zeroRows, new Map(zeroCampaigns.map((c) => [c.campaign_id, c])), new Map(clientRows.map((c) => [c.client_id, c.name])));
+  const zero = classifyZeroCost(zeroRows, new Map(zeroCampaigns.map((c) => [c.campaign_id, c])), new Map(clientRows.map((c) => [c.client_id, c.name])), zeroDecisions);
 
   const missingIds = [...new Set(Object.values(perCampaignCounts).flat().map((r) => r._id))]
     .filter((id) => id && !campaignDocs.has(id));
@@ -209,12 +209,12 @@ export async function fetchOpenIssues(db, now = new Date(), { log } = {}) {
   }
 
   // One issue per campaign x service: the id carries the service so two services on one campaign stay separate.
-  const serviceKey = (svc) => Object.entries(ZERO_COST_SERVICES).find(([, name]) => name === svc)?.[0];
   for (const z of zero.issues) {
-    issues.push({ ...base(CATEGORY.ZERO_COST, z.campaign, 1, { service: z.service, internal_note: z.note.slice(0, 300) }), campaign_id: `${z.campaign.campaign_id}|${serviceKey(z.service)}` });
+    issues.push({ ...base(CATEGORY.ZERO_COST, z.campaign, 1, { service: z.service, internal_note: z.note.slice(0, 300) }), campaign_id: `${z.campaign.campaign_id}|${z.service_id}` });
   }
   // AI-only notes and Chiraiya campaigns go to a person, not to a nudge.
-  const manualVerify = zero.review.map((z) => ({ campaign_id: z.campaign.campaign_id, campaign_name: z.campaign.name, service: z.service, note: z.note.slice(0, 200) }));
+  const manualVerify = zero.review.map((z) => ({ campaign_id: z.campaign.campaign_id, service_id: z.service_id, campaign_name: z.campaign.name, service: z.service, note: z.note.slice(0, 200) }));
+  const zeroExcluded = zero.excluded.map((z) => ({ campaign_id: z.campaign.campaign_id, service_id: z.service_id, campaign_name: z.campaign.name, service: z.service, note: z.note.slice(0, 200), why: z.why }));
 
-  return { issues, orphans, manualVerify };
+  return { issues, orphans, manualVerify, zeroExcluded };
 }
