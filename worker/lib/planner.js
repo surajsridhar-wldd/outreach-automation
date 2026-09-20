@@ -19,6 +19,7 @@ export const CATEGORY = {
   SCREENSHOT: 'screenshot_approvals',
   CLOSING: 'pending_closings',
   PROPOSAL: 'pending_proposals',
+  ZERO_COST: 'zero_cost_services',
 };
 
 /** Lower tier = more urgent. */
@@ -28,9 +29,10 @@ export const TIER = {
   [CATEGORY.SCREENSHOT]: 2,
   [CATEGORY.CLOSING]: 3,
   [CATEGORY.PROPOSAL]: 3,
+  [CATEGORY.ZERO_COST]: 3,
 };
 
-export const WEEKLY_CATEGORIES = new Set([CATEGORY.CLOSING, CATEGORY.PROPOSAL]);
+export const WEEKLY_CATEGORIES = new Set([CATEGORY.CLOSING, CATEGORY.PROPOSAL, CATEGORY.ZERO_COST]);
 
 export const DEFAULT_SETTINGS = {
   laneACap: 40,

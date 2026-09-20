@@ -104,7 +104,7 @@ test('mime: non-ASCII subjects are RFC 2047 encoded, ASCII ones are left alone',
 });
 
 // ---------- templates ----------
-test('email: one numbered line per campaign, bullets under it, guidance once, sign-off', () => {
+test('email: one numbered line per campaign, each bullet says what to do, one short "why" per category', () => {
   const items = [
     { issueId: 'i3', category: CATEGORY.SCREENSHOT, campaign_name: 'Xiaomi Plan 3', item_count: 1, detail: {}, nextN: 1 },
     { issueId: 'i2', category: CATEGORY.CLOSING, campaign_name: 'Zeta', item_count: 1, detail: { overdue_days: 12 }, nextN: 1 },
@@ -113,20 +113,28 @@ test('email: one numbered line per campaign, bullets under it, guidance once, si
   ];
   const { body, itemNumbers } = buildEmail(items, { name: 'Priya Sharma', senderName: 'Suraj Sridhar', kind: 'first', hasInvoice: true, monthEnd: false });
   assert.match(body, /^Hi Priya,/);
-  assert.match(body, /1\. Alpha\n   - 2 vendor invoices awaiting your approval/);
-  assert.match(body, /2\. Xiaomi Plan 3\n   - 1 submitted creator link awaiting your approval\n   - 1 screenshot awaiting your approval/);
-  assert.match(body, /3\. Zeta\n   - posting ended 12 days ago and the campaign is still open/);
+  assert.match(body, /1\. Alpha\n   - 2 vendor invoices: please review the proof of work and approve or reject/);
+  assert.match(body, /2\. Xiaomi Plan 3\n   - 1 submitted creator link: please approve or reject\n   - 1 screenshot: please approve or reject/);
+  assert.match(body, /3\. Zeta\n   - Posting ended 12 days ago\. If it is still live, extend the posting end date on DMS\. If only the final report is pending, reply with an expected completion date/);
   assert.equal((body.match(/Xiaomi Plan 3/g) || []).length, 1, 'a campaign is listed once');
-  assert.equal((body.match(/please open DMS and approve or reject each item/g) || []).length, 1, 'guidance appears once');
-  assert.match(body, /Invoices: please review the proof of work/);
-  assert.match(body, /Closings: if the campaign is still live/);
-  assert.ok(!/Proposals:/.test(body), 'no guidance for categories that are not present');
-  assert.match(body, /tell me the item number and the date/);
+  assert.match(body, /Why this matters:/);
+  assert.match(body, /Creator links and screenshots: timely approval helps better track metrics and reduce outstanding\/pending actions/);
+  assert.equal((body.match(/Creator links and screenshots:/g) || []).length, 1, 'one why-line for creator links + screenshots');
+  assert.match(body, /Invoices: vendors are paid only after approval/);
+  assert.match(body, /Closings: an open campaign past its posting date/);
+  assert.ok(!/Proposals:/.test(body), 'no why-line for categories that are not present');
+  assert.ok(body.indexOf('Why this matters:') > body.indexOf('3. Zeta') && body.indexOf('Why this matters:') < body.indexOf('Reply here once done'));
+  assert.match(body, /send the item number and a date if you need time/);
   assert.match(body, /Thanks,\nSuraj Sridhar$/);
+  assert.ok(body.length < 1800, 'kept short');
   assert.deepEqual(itemNumbers, { i1: 1, i3: 2, i4: 2, i2: 3 });
 });
 
-test('email: follow-up, final and month-end wording; "done" claims are called out', () => {
+test('email: zero-cost service line, follow-up, final and month-end wording; "done" claims are called out', () => {
+  const zc = buildEmail([{ issueId: 'z1', category: CATEGORY.ZERO_COST, campaign_name: 'Rahul Joshi x Hope Rescue', item_count: 1, detail: { service: 'ORM', internal_note: 'used Prayag tiwari for comment seeding!' }, nextN: 1 }], { name: 'X', senderName: 'S', kind: 'first' }).body;
+  assert.match(zc, /ORM shows zero deliverables and zero internal cost\. If it was executed, please coordinate with the Inventory team to map it/);
+  assert.match(zc, /\(Internal note: used Prayag tiwari for comment seeding!\)/);
+  assert.match(zc, /Services: unmapped services misstate campaign margins/);
   const inv = [{ issueId: 'i1', category: CATEGORY.INVOICE, campaign_name: 'Alpha', item_count: 1, detail: {}, nextN: 2, claimedDone: true }];
   const f = buildEmail(inv, { name: 'X', senderName: 'S', kind: 'followup', hasInvoice: true, monthEnd: true, finalNoticeDay: false }).body;
   assert.match(f, /Following up on my earlier email/);

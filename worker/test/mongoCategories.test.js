@@ -37,11 +37,13 @@ function fakeDb({ hintFails = false } = {}) {
     invoices: [{ _id: 'c-inv', item_count: 2 }],
     creator: [{ _id: 'c-cre', item_count: 3 }, { _id: 'c-gone', item_count: 1 }],
     shots: [{ _id: 'c-inv', item_count: 4 }],
+    zero: [{ campaign_id: 'c-zero', service_id: 'cff61057-86a9-4dbc-968f-ee7be97fcf1e', notes: ['Das will do it'] }],
   };
   const campaigns = {
     'c-inv': { campaign_id: 'c-inv', name: 'Invoice Camp', campaign_status: 'Complete', campaign_lead: 'u-active' },
     'c-cre': { campaign_id: 'c-cre', name: 'Creator Camp', campaign_status: 'Active', campaign_lead: 'u-deleted' },
     'c-close': { campaign_id: 'c-close', name: 'Closing Camp', campaign_status: 'Active', campaign_lead: 'u-missing', posting_end_date: new Date('2026-09-01T18:30:00Z') },
+    'c-zero': { campaign_id: 'c-zero', name: 'Zero Camp', campaign_status: 'Complete', campaign_lead: 'u-active', client_id: 'cl1' },
     'c-prop': { campaign_id: 'c-prop', name: 'Proposal Camp', campaign_status: 'Proposal', campaign_lead: null, createdAt: new Date('2026-08-20T10:00:00Z') },
   };
   const users = [
@@ -59,11 +61,13 @@ function fakeDb({ hintFails = false } = {}) {
     collection: (name) => ({
       aggregate: (pipeline, options) => {
         if (name === 'invoices') return toArray(data.invoices);
+        if (name === 'campaign_services') return toArray(data.zero);
         if (options?.hint) { calls.hinted++; if (hintFails) throw new Error('bad hint'); return toArray(data.shots); }
         if (pipeline[0].$match.latest_screenshot_status === 0) { calls.unhinted++; return toArray(data.shots); }
         return toArray(data.creator);
       },
       find: (filter) => {
+        if (name === 'clients') return toArray([{ client_id: 'cl1', name: 'Some Client' }]);
         if (name === 'users') return toArray(users.filter((u) => filter.id.$in.includes(u.id)));
         if (name === 'cohorts') return toArray(cohorts.filter((c) => filter.cohort_id.$in.includes(c.cohort_id)));
         if (name === 'pods') return toArray(pods.filter((p) => filter.pod_id.$in.includes(p.pod_id)));
@@ -91,6 +95,10 @@ test('fetchOpenIssues resolves owners, drops orphans, and computes ages', async 
   assert.equal(by(CATEGORY.PROPOSAL, 'c-prop').owner_state, 'missing');       // no lead at all
   assert.equal(by(CATEGORY.PROPOSAL, 'c-prop').detail.pending_days, 30);
   assert.deepEqual(orphans, [{ category: CATEGORY.CREATOR, campaign_id: 'c-gone', item_count: 1 }]);
+  const zero = issues.find((i) => i.category === CATEGORY.ZERO_COST);
+  assert.equal(zero.campaign_id, 'c-zero|cff61057-86a9-4dbc-968f-ee7be97fcf1e');   // one issue per campaign x service
+  assert.equal(zero.detail.service, 'ORM');
+  assert.equal(zero.owner_state, 'active');
   assert.ok(!issues.some((i) => i.campaign_id === 'c-gone'));
 });
 

@@ -17,7 +17,7 @@ on:
         required: false
         type: choice
         default: "run"
-        options: ["run", "selfcheck", "llmcheck"]
+        options: ["run", "selfcheck", "llmcheck", "zerocheck"]
       as_of:
         description: "Optional, shadow/rehearsal only: plan as if it were this moment, e.g. 2026-09-21T05:30:00Z (= Monday 11:00 IST)."
         required: false
@@ -66,6 +66,9 @@ jobs:
       - name: Model check
         if: inputs.task == 'llmcheck'
         run: node llmcheck.js
+      - name: Zero-cost check (read-only)
+        if: inputs.task == 'zerocheck'
+        run: node zerocheck.js
       - name: Keep the full report
         if: always()
         uses: actions/upload-artifact@v4
