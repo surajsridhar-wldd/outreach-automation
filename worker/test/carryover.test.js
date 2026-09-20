@@ -34,7 +34,7 @@ test('a different person on the same campaign, an unknown campaign, or no send i
       { id: 'r1', category: 'PENDING_CLOSURE', campaign: 'Alpha', contactEmail: 'ravi@wldd.in', gmail_thread_id: 'T1' },
       { id: 'r2', category: 'PENDING_CLOSURE', campaign: 'Nope', contactEmail: 'priya@wldd.in', gmail_thread_id: 'T2' },
       { id: 'r3', category: 'PENDING_CLOSURE', campaign: 'Gamma', contactEmail: 'ravi@wldd.in', gmail_thread_id: 'T3' },
-      { id: 'r4', category: 'NO_SERVOCE_COST', campaign: 'Gamma', contactEmail: 'ravi@wldd.in', gmail_thread_id: 'T4' },
+      { id: 'r4', category: 'REVENUE_MISMATCH', campaign: 'Gamma', contactEmail: 'ravi@wldd.in', gmail_thread_id: 'T4' },
     ],
     history: new Map([['r1', h('2026-09-11T05:00:00Z')], ['r2', h('2026-09-11T05:00:00Z')]]), issues, people,
   });
