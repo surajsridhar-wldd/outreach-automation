@@ -3,7 +3,7 @@
 // Supabase service key, and only company addresses are accepted.
 import { db } from "@/lib/supabase";
 import { decrypt } from "@/lib/crypto";
-import { verifyRequest, processSendRequest } from "@/lib/nudgeSend.mjs";
+import { verifyRequest, processSendRequest, processReadRequest, READ_TYPES } from "@/lib/nudgeSend.mjs";
 
 export const maxDuration = 30;
 
@@ -29,6 +29,25 @@ export async function POST(req) {
     const { data: sender, error: uErr } = await db.from("users")
       .select("gmail_address,gmail_refresh_token,slack_access_token").eq("email", setting.value).single();
     if (uErr) throw new Error(`sender: ${uErr.message}`);
+
+    // Read requests (replies, bounces). Restricted to threads/channels the nudge system itself created.
+    if (READ_TYPES.has(body.type)) {
+      const guards = {
+        allowThread: async (id) => {
+          const { data } = await db.from("messages_out").select("id").eq("gmail_thread_id", id).limit(1);
+          return !!data?.length;
+        },
+        allowChannel: async (id) => {
+          const { data } = await db.from("dms_people").select("dms_user_id").eq("slack_dm_channel_id", id).limit(1);
+          return !!data?.length;
+        },
+      };
+      const readResult = await processReadRequest(body, sender, {
+        decrypt, guards,
+        google: { clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET },
+      });
+      return Response.json(readResult);
+    }
 
     // A retried request with the same key can never send twice: the key is claimed BEFORE sending.
     const key = typeof body.idempotencyKey === "string" ? body.idempotencyKey : null;
