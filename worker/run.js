@@ -74,7 +74,8 @@ export async function main(env = process.env) {
 
     // 1. Read Mongo (read-only) and mirror it into `issues`.
     await mongo.connect();
-    const { issues: fetched, orphans } = await fetchOpenIssues(mongo.db('test'), realNow, { log: console.log });
+    const { issues: fetched, orphans, manualVerify } = await fetchOpenIssues(mongo.db('test'), realNow, { log: console.log });
+    for (const z of manualVerify || []) await S.addReviewItem(db, { kind: 'low_confidence', note: 'Zero-cost service needs a manual check (AI or Chiraiya, no clear done-by-our-team note): ' + z.campaign_name + ', ' + z.service + '. Note: ' + z.note });
     const existingOpen = await S.loadOpenIssues(db);
     const diff = diffIssues(existingOpen, fetched);
     // Reporting lines: the company team sheet is the most up-to-date source; DMS cohort/pod leads are the
@@ -133,7 +134,7 @@ export async function main(env = process.env) {
       recentRunCounts: recentCounts,
       settings: {
         senderName: senderRow.name, senderEmail: senderRow.gmail_address, redirectTo: settings.rehearsal_redirect_to,
-        allowlist: settings.canary_allowlist || [], sendWindow: settings.send_window, rehearsalMax: settings.rehearsal_max,
+        allowlist: settings.canary_allowlist || [], inventoryCc: settings.inventory_cc || 'inventory@wldd.in', sendWindow: settings.send_window, rehearsalMax: settings.rehearsal_max,
       },
     });
     if (exec.rampDone) await S.setSetting(db, 'ramp_active', false);

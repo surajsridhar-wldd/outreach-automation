@@ -10,6 +10,7 @@
 
 import { addDays, daysBetween, utcDate } from './time.js';
 import { CATEGORY } from './planner.js';
+import { zeroCostPipeline, classifyZeroCost, ZERO_COST_SERVICES } from './zeroCost.js';
 
 /** Mongo dates are compared on their UTC calendar date, which is how the owner's lists were built. */
 export function endOfUtcDay(dateStr) {
@@ -129,6 +130,16 @@ export async function fetchOpenIssues(db, now = new Date(), { log } = {}) {
   remember(closings);
   remember(proposals);
 
+  // Zero-cost services: one row per campaign x service that passes the methodology's tests.
+  const zeroRows = await db.collection('campaign_services').aggregate(zeroCostPipeline()).toArray();
+  const zeroCampaignIds = [...new Set(zeroRows.map((r) => r.campaign_id))];
+  const zeroCampaigns = zeroCampaignIds.length
+    ? await db.collection('campaigns').find({ campaign_id: { $in: zeroCampaignIds } }, { projection: CAMPAIGN_PROJECTION }).toArray() : [];
+  remember(zeroCampaigns);
+  const clientIds = [...new Set(zeroCampaigns.map((c) => c.client_id).filter(Boolean))];
+  const clientRows = clientIds.length ? await db.collection('clients').find({ client_id: { $in: clientIds } }, { projection: { _id: 0, client_id: 1, name: 1 } }).toArray() : [];
+  const zero = classifyZeroCost(zeroRows, new Map(zeroCampaigns.map((c) => [c.campaign_id, c])), new Map(clientRows.map((c) => [c.client_id, c.name])));
+
   const missingIds = [...new Set(Object.values(perCampaignCounts).flat().map((r) => r._id))]
     .filter((id) => id && !campaignDocs.has(id));
   if (missingIds.length) {
@@ -197,5 +208,13 @@ export async function fetchOpenIssues(db, now = new Date(), { log } = {}) {
     }));
   }
 
-  return { issues, orphans };
+  // One issue per campaign x service: the id carries the service so two services on one campaign stay separate.
+  const serviceKey = (svc) => Object.entries(ZERO_COST_SERVICES).find(([, name]) => name === svc)?.[0];
+  for (const z of zero.issues) {
+    issues.push({ ...base(CATEGORY.ZERO_COST, z.campaign, 1, { service: z.service, internal_note: z.note.slice(0, 300) }), campaign_id: `${z.campaign.campaign_id}|${serviceKey(z.service)}` });
+  }
+  // AI-only notes and Chiraiya campaigns go to a person, not to a nudge.
+  const manualVerify = zero.review.map((z) => ({ campaign_id: z.campaign.campaign_id, campaign_name: z.campaign.name, service: z.service, note: z.note.slice(0, 200) }));
+
+  return { issues, orphans, manualVerify };
 }

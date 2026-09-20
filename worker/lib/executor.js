@@ -80,6 +80,9 @@ export async function executePlan({
       }
     }
 
+    // Zero-cost-service reminders have always copied the inventory team.
+    if (items.some((i) => i.category === CATEGORY.ZERO_COST) && settings.inventoryCc && !cc.includes(settings.inventoryCc)) cc = [...cc, settings.inventoryCc];
+
     const isReal = mode === 'live' || (mode === 'canary' && (allow.has(person.email.toLowerCase()) || allow.has(String(person.dms_user_id).toLowerCase())));
     const rehearse = mode === 'rehearsal' && rehearsalSent < rehearsalMax;
     const threaded = isReal && person.email_thread_id && person.email_rfc_message_id;

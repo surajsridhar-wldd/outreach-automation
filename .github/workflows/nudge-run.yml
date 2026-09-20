@@ -66,6 +66,9 @@ jobs:
       - name: Model check
         if: inputs.task == 'llmcheck'
         run: node llmcheck.js
+      - name: Zero-cost check (read-only)
+        if: inputs.task == 'zerocheck'
+        run: node zerocheck.js
       - name: Keep the full report
         if: always()
         uses: actions/upload-artifact@v4

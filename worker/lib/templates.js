@@ -1,10 +1,8 @@
-// Message templates. Pure functions: no I/O, no model. The wording for closings, proposals and
-// vendor invoices is carried over from the messages the owner was already sending; creator
-// submissions and screenshot approvals are new. Edit the text here.
+// Message templates. Pure functions: no I/O, no model. Wording follows the messages the owner used to send
+// by hand, shortened: each item carries its own instruction on one line, and a short "why" per category
+// sits below the list. Edit the text here.
 //
-// One numbered line per CAMPAIGN (a campaign with both creator links and screenshots pending is one
-// line with two bullets), and the "what to do" guidance is written once per category present, so
-// replies like "1. done, 3. need till Friday" map to campaigns.
+// One numbered line per CAMPAIGN, so replies like "1. done, 3. need till Friday" map to campaigns.
 
 import { CATEGORY, TIER } from './planner.js';
 
@@ -12,24 +10,30 @@ export const FIRST_SUBJECT = '[Action Required] Pending items on DMS';
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
-/** The bullet under a campaign for one pending item. */
+/** The bullet under a campaign for one pending item: what it is and what to do. */
 export function itemLine(item) {
   const n = item.item_count || 1;
   switch (item.category) {
-    case CATEGORY.INVOICE: return `${plural(n, 'vendor invoice', 'vendor invoices')} awaiting your approval`;
-    case CATEGORY.CREATOR: return `${plural(n, 'submitted creator link', 'submitted creator links')} awaiting your approval`;
-    case CATEGORY.SCREENSHOT: return `${plural(n, 'screenshot', 'screenshots')} awaiting your approval`;
-    case CATEGORY.CLOSING: return `posting ended ${item.detail?.overdue_days ?? 'several'} days ago and the campaign is still open`;
-    case CATEGORY.PROPOSAL: return `in Proposal stage for ${item.detail?.pending_days ?? 'more than 14'} days`;
+    case CATEGORY.INVOICE: return `${plural(n, 'vendor invoice', 'vendor invoices')}: please review the proof of work and approve or reject`;
+    case CATEGORY.CREATOR: return `${plural(n, 'submitted creator link', 'submitted creator links')}: please approve or reject`;
+    case CATEGORY.SCREENSHOT: return `${plural(n, 'screenshot', 'screenshots')}: please approve or reject`;
+    case CATEGORY.CLOSING: return `Posting ended ${item.detail?.overdue_days ?? 'several'} days ago. If it is still live, extend the posting end date on DMS. If only the final report is pending, reply with an expected completion date and close the campaign on DMS`;
+    case CATEGORY.PROPOSAL: return `In Proposal stage for ${item.detail?.pending_days ?? 'more than 14'} days. Mark it Cancelled if the client is inactive, or Approved/Active if it is underway. If talks are still ongoing, reply and update DMS once confirmed`;
+    case CATEGORY.ZERO_COST: {
+      const note = item.detail?.internal_note ? ` (Internal note: ${String(item.detail.internal_note).slice(0, 160)})` : '';
+      return `${item.detail?.service || 'A service'} shows zero deliverables and zero internal cost. If it was executed, please coordinate with the Inventory team to map it. If it is planned for later, no action is needed yet. If it will never run, remove it from the campaign services${note}`;
+    }
     default: return 'needs your attention';
   }
 }
 
-const GUIDANCE = {
-  approvals: 'Approvals (invoices, creator links, screenshots): please open DMS and approve or reject each item.',
-  [CATEGORY.INVOICE]: 'Invoices: please review the proof of work submitted by the vendor. Invoices that are not actioned by the end of the month are auto-rejected, and the vendor has to raise them again.',
-  [CATEGORY.CLOSING]: 'Closings: if the campaign is still live or posting is in progress, please extend the posting end date on DMS. If posting is complete and only the final report is pending, please close the campaign on DMS soon.',
-  [CATEGORY.PROPOSAL]: 'Proposals: please make sure the status on DMS is accurate. If the client is inactive or it is not moving forward, mark it Cancelled. If approved or underway, update it to Approved or Active. If discussions are still ongoing, no immediate action is needed, but please follow up with the relevant teams and update DMS once confirmed.',
+// Why it matters, once per category present (short on purpose).
+const WHY = {
+  approvals: 'Creator links and screenshots: timely approval helps better track metrics and reduce outstanding/pending actions.',
+  [CATEGORY.INVOICE]: 'Invoices: vendors are paid only after approval, and invoices not actioned by the end of the month are auto-rejected, so the vendor has to raise them again.',
+  [CATEGORY.CLOSING]: 'Closings: an open campaign past its posting date keeps revenue and margin reporting incomplete.',
+  [CATEGORY.PROPOSAL]: 'Proposals: stale proposals distort the pipeline numbers.',
+  [CATEGORY.ZERO_COST]: 'Services: unmapped services misstate campaign margins, which are reported to management.',
 };
 
 const firstName = (name) => (name || '').trim().split(/\s+/)[0] || 'there';
@@ -53,25 +57,25 @@ export function buildEmail(items, ctx) {
   const itemNumbers = {};
   const blocks = ordered.map((g, idx) => {
     g.items.forEach((it) => { if (it.issueId) itemNumbers[it.issueId] = idx + 1; });
-    const bullets = g.items.map((it) => `   - ${itemLine(it)}${it.claimedDone ? ' (You mentioned this was done, but DMS still shows it as pending. Please double-check.)' : ''}`);
+    const bullets = g.items.map((it) => `   - ${itemLine(it)}${it.claimedDone ? '. You mentioned this was done, but DMS still shows it as pending, so please double-check' : ''}`);
     return `${idx + 1}. ${g.name}\n${bullets.join('\n')}`;
   });
 
   const intro =
-    ctx.kind === 'first' ? 'We found the following items on DMS that need your action:'
+    ctx.kind === 'first' ? 'These items on DMS need your action:'
     : ctx.final ? 'This is a final reminder. These items are still pending on DMS:'
-    : 'Following up on my earlier email. These items are still showing as pending on DMS:';
+    : 'Following up on my earlier email. These items are still pending on DMS:';
 
   const cats = new Set(items.map((i) => i.category));
-  const guidance = [];
-  if ([CATEGORY.INVOICE, CATEGORY.CREATOR, CATEGORY.SCREENSHOT].some((c) => cats.has(c))) guidance.push(GUIDANCE.approvals);
-  for (const c of [CATEGORY.INVOICE, CATEGORY.CLOSING, CATEGORY.PROPOSAL]) if (cats.has(c)) guidance.push(GUIDANCE[c]);
+  const why = [];
+  if ([CATEGORY.CREATOR, CATEGORY.SCREENSHOT].some((c) => cats.has(c))) why.push(WHY.approvals);
+  for (const c of [CATEGORY.INVOICE, CATEGORY.CLOSING, CATEGORY.PROPOSAL, CATEGORY.ZERO_COST]) if (cats.has(c)) why.push(WHY[c]);
 
   const extras = [];
   if (ctx.hasInvoice && ctx.monthEnd) {
     extras.push(ctx.finalNoticeDay
-      ? 'Because this is one of the last working days of the month, please approve or reject the pending invoices today.'
-      : 'Reminder: invoices that are not approved or rejected by the end of this month are auto-rejected.');
+      ? 'This is one of the last working days of the month, so please approve or reject the pending invoices today.'
+      : 'Reminder: invoices not approved or rejected by the end of this month are auto-rejected.');
   }
 
   const body = [
@@ -82,10 +86,10 @@ export function buildEmail(items, ctx) {
     blocks.join('\n\n'),
     ...(extras.length ? ['', ...extras] : []),
     '',
-    'What to do:',
-    ...guidance.map((g) => `- ${g}`),
+    'Why this matters:',
+    ...why.map((w) => `- ${w}`),
     '',
-    'Please reply to this email once done. If something is not yours to handle, tell me who should look at it. If you need a few days on any item, tell me the item number and the date you expect to close it.',
+    'Reply here once done, or send the item number and a date if you need time. If something is not yours, tell me who should look at it.',
     '',
     'Thanks,',
     ctx.senderName,
