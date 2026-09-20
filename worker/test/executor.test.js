@@ -23,7 +23,7 @@ function world({ count = 3, invoiceNudgeCount = 0, extraPerson = {} } = {}) {
 }
 
 function fakeStore() {
-  const s = { messages: [], items: [], reviews: [], applied: null, threads: {}, sentToday: new Set() };
+  const s = { messages: [], items: [], reviews: [], applied: [], threads: {}, sentToday: new Set() };
   return {
     s,
     hasMessageToday: async (rid) => s.sentToday.has(rid),
@@ -32,7 +32,7 @@ function fakeStore() {
     updateMessage: async (id, patch) => Object.assign(s.messages.find((m) => m.id === id), patch),
     savePersonThread: async (id, patch) => { s.threads[id] = { ...(s.threads[id] || {}), ...patch }; },
     addReviewItem: async (r) => { s.reviews.push(r); },
-    applySent: async (a) => { s.applied = a; },
+    applySent: async (a) => { s.applied.push(a); },
   };
 }
 
@@ -66,7 +66,7 @@ test('shadow: drafts only, nothing sent, no state change', async () => {
   assert.equal(stats.drafted, 3);
   assert.equal(stats.sent, 0);
   assert.equal(r.senders.sent.emails.length, 0);
-  assert.equal(r.store.s.applied, null);
+  assert.deepEqual(r.store.s.applied, []);
   assert.ok(r.store.s.messages.every((m) => m.status === 'draft' && m.mode === 'shadow'));
   assert.equal(r.store.s.items.length, 3);
 });
@@ -78,7 +78,7 @@ test('rehearsal: real emails go ONLY to the owner, with a banner, and no state c
   assert.ok(r.senders.sent.emails.every((e) => e.to === 'suraj@wldd.in'));
   assert.ok(r.senders.sent.emails.every((e) => e.subject.startsWith('[REHEARSAL]')));
   assert.match(r.senders.sent.emails[0].body, /would have gone to p1@wldd.in/);
-  assert.equal(r.store.s.applied, null);
+  assert.deepEqual(r.store.s.applied, []);
   assert.deepEqual(r.store.s.threads, {});
   assert.ok(r.store.s.messages.every((m) => m.intended_to?.endsWith('@wldd.in')));
 });
@@ -89,9 +89,9 @@ test('canary: only allow-listed people get a real email; the rest stay drafts; s
   assert.equal(stats.sent, 1);
   assert.equal(stats.drafted, 2);
   assert.deepEqual(r.senders.sent.emails.map((e) => e.to), ['p2@wldd.in']);
-  assert.deepEqual(r.store.s.applied.recipientIds, ['p2']);
-  assert.deepEqual(r.store.s.applied.issues, [{ id: 'i2', nudgeCount: 0 }]);
-  assert.deepEqual(r.store.s.applied.deferredIds, [], 'a canary never ages the real waiting queue');
+  assert.deepEqual(r.store.s.applied.map((a) => a.recipientIds), [['p2']]);
+  assert.deepEqual(r.store.s.applied[0].issues, [{ id: 'i2', nudgeCount: 0 }]);
+  assert.ok(r.store.s.applied.every((a) => a.deferredIds.length === 0), 'a canary never ages the real waiting queue');
 });
 
 test('live: everyone selected gets a real email, state advances, thread saved for follow-ups', async () => {
@@ -99,7 +99,8 @@ test('live: everyone selected gets a real email, state advances, thread saved fo
   const stats = await r.exec('live');
   assert.equal(stats.sent, 3);
   assert.deepEqual(r.senders.sent.emails.map((e) => e.to).sort(), ['p1@wldd.in', 'p2@wldd.in', 'p3@wldd.in']);
-  assert.equal(r.store.s.applied.recipientIds.length, 3);
+  assert.equal(r.store.s.applied.length, 3, 'state advances one message at a time');
+  assert.ok(r.store.s.applied.every((a) => a.recipientIds.length === 1));
   assert.equal(r.store.s.threads.p1.email_thread_id, 't1');
   assert.equal(r.store.s.threads.p1.email_subject, '[Action Required] Pending items on DMS');
 });
@@ -150,7 +151,7 @@ test('one failed send is recorded and reviewed but does not stop the others or a
   const stats = await r.exec('live');
   assert.equal(stats.failed, 1);
   assert.equal(stats.sent, 2);
-  assert.deepEqual(r.store.s.applied.recipientIds.sort(), ['p1', 'p3']);
+  assert.deepEqual(r.store.s.applied.flatMap((a) => a.recipientIds).sort(), ['p1', 'p3']);
   assert.equal(r.store.s.messages.find((m) => m.to_address === 'p2@wldd.in').status, 'failed');
   assert.equal(r.store.s.reviews.at(-1).kind, 'send_failed');
 });
@@ -191,5 +192,33 @@ test('rehearsal is capped so the owner\'s inbox is not flooded; the rest stay dr
   assert.equal(stats.sent, 2);
   assert.equal(stats.drafted, 1);
   assert.equal(r.senders.sent.emails.length, 2);
-  assert.equal(r.store.s.applied, null);
+  assert.deepEqual(r.store.s.applied, []);
+});
+
+test('every send carries the message id as its idempotency key, so a retry can never double-send', async () => {
+  const r = run({});
+  await r.exec('live');
+  const keys = r.senders.sent.emails.map((e) => e.idempotencyKey);
+  assert.deepEqual(keys.sort(), r.store.s.messages.filter((m) => m.channel === 'email').map((m) => m.id).sort());
+  assert.equal(new Set(keys).size, 3);
+});
+
+test('a manual manager override wins over the manager found in DMS', async () => {
+  const day = new Date('2026-10-09T05:30:00Z');
+  const w = world({ count: 1, invoiceNudgeCount: 3, extraPerson: { manager_email: 'dms-boss@wldd.in', manager_override_email: 'chosen-boss@wldd.in' } });
+  w.issues[0].lastNudgedAt = '2026-10-05T05:30:00Z';
+  const plan = planRun({ now: day, issues: w.issues, people: { p1: { enteredAt: 'x' } } });
+  const store = fakeStore(); const senders = fakeSenders();
+  await executePlan({ plan, mode: 'live', now: day, runId: 'r', store, senders, issuesById: w.issuesById, people: w.people, settings: SETTINGS });
+  assert.deepEqual(senders.sent.emails[0].cc, ['chosen-boss@wldd.in']);
+});
+
+test('a run killed half way keeps the state of everything already sent', async () => {
+  const r = run({});
+  const crashingStore = { ...r.store };
+  let calls = 0;
+  crashingStore.updateMessage = async (id, patch) => { if (patch.status === 'sent' && ++calls === 2) throw new Error('database went away'); return r.store.updateMessage(id, patch); };
+  await assert.rejects(() => executePlan({ plan: r.plan, mode: 'live', now: NOW, runId: 'r', store: crashingStore, senders: r.senders, issuesById: r.w.issuesById, people: r.w.people, settings: SETTINGS }));
+  // the first message went out and was recorded before the crash
+  assert.ok(r.store.s.applied.length >= 1);
 });

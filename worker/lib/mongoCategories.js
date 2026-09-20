@@ -76,6 +76,19 @@ export function proposalFilter(now = new Date()) {
   return { campaign_status: PROPOSAL_STATUS, createdAt: { $lte: cutoffs(now).proposalCreated } };
 }
 
+/**
+ * The reporting manager, from DMS: the person's cohort lead, else their pod lead. A lead only counts if
+ * they are an active company account and not the person themselves (leads have no one above them here).
+ */
+export function resolveManager(user, cohortLeadId, podLeadId, usersById) {
+  const usable = (m) => m && m.is_deleted === false && m.id !== user.id && /^[^@\s]+@wldd\.in$/i.test(m.email || '');
+  const cohort = usersById.get(cohortLeadId);
+  if (usable(cohort)) return { manager_dms_user_id: cohort.id, manager_name: cohort.name, manager_email: cohort.email, manager_source: 'cohort' };
+  const pod = usersById.get(podLeadId);
+  if (usable(pod)) return { manager_dms_user_id: pod.id, manager_name: pod.name, manager_email: pod.email, manager_source: 'pod' };
+  return { manager_dms_user_id: null, manager_name: null, manager_email: null, manager_source: null };
+}
+
 const CAMPAIGN_PROJECTION = {
   _id: 0, campaign_id: 1, name: 1, campaign_status: 1, campaign_lead: 1,
   posting_end_date: 1, createdAt: 1, client_id: 1, actual_cohort: 1, actual_pod: 1,
@@ -124,16 +137,31 @@ export async function fetchOpenIssues(db, now = new Date(), { log } = {}) {
   }
 
   const leadIds = [...new Set([...campaignDocs.values()].map((c) => c.campaign_lead).filter(Boolean))];
-  const users = leadIds.length
-    ? await db.collection('users').find({ id: { $in: leadIds } }, { projection: { _id: 0, id: 1, name: 1, email: 1, is_deleted: 1 } }).toArray()
-    : [];
+  const USER_PROJECTION = { _id: 0, id: 1, name: 1, email: 1, is_deleted: 1, cohort_id: 1, pod_id: 1 };
+  const users = leadIds.length ? await db.collection('users').find({ id: { $in: leadIds } }, { projection: USER_PROJECTION }).toArray() : [];
   const userById = new Map(users.map((u) => [u.id, u]));
+
+  // Reporting lines (cohort lead, else pod lead) for the people we will message.
+  const cohortIds = [...new Set(users.map((u) => u.cohort_id).filter(Boolean))];
+  const podIds = [...new Set(users.map((u) => u.pod_id).filter(Boolean))];
+  const cohorts = cohortIds.length ? await db.collection('cohorts').find({ cohort_id: { $in: cohortIds } }, { projection: { _id: 0, cohort_id: 1, cohort_lead_id: 1 } }).toArray() : [];
+  const pods = podIds.length ? await db.collection('pods').find({ pod_id: { $in: podIds } }, { projection: { _id: 0, pod_id: 1, pod_lead_id: 1 } }).toArray() : [];
+  const cohortLeadOf = new Map(cohorts.map((c) => [c.cohort_id, c.cohort_lead_id]));
+  const podLeadOf = new Map(pods.map((p) => [p.pod_id, p.pod_lead_id]));
+  const managerIds = [...new Set([...cohortLeadOf.values(), ...podLeadOf.values()].filter(Boolean))];
+  const managerUsers = managerIds.length ? await db.collection('users').find({ id: { $in: managerIds } }, { projection: USER_PROJECTION }).toArray() : [];
+  const managersById = new Map(managerUsers.map((u) => [u.id, u]));
 
   const ownerInfo = (campaign) => {
     const u = userById.get(campaign.campaign_lead);
     // Only an explicit is_deleted === false counts as an active account.
     const state = !campaign.campaign_lead || !u ? 'missing' : u.is_deleted === false ? 'active' : 'deleted';
-    return { owner_dms_user_id: campaign.campaign_lead || null, owner_state: state, owner_name: u?.name ?? null, owner_email: u?.email ?? null };
+    const mgr = u ? resolveManager(u, cohortLeadOf.get(u.cohort_id), podLeadOf.get(u.pod_id), managersById)
+      : { manager_dms_user_id: null, manager_name: null, manager_email: null, manager_source: null };
+    return {
+      owner_dms_user_id: campaign.campaign_lead || null, owner_state: state, owner_name: u?.name ?? null, owner_email: u?.email ?? null,
+      owner_manager_id: mgr.manager_dms_user_id, owner_manager_name: mgr.manager_name, owner_manager_email: mgr.manager_email, owner_manager_source: mgr.manager_source,
+    };
   };
 
   const base = (category, campaign, item_count, detail) => ({

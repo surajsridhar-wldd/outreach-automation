@@ -2,9 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveRecipients } from '../lib/recipients.js';
 import { diffIssues, peopleFromIssues } from '../lib/sync.js';
-import { buildRawEmail, encodeHeader } from '../lib/mime.js';
-import { buildEmail, buildSlackPing, itemText, FIRST_SUBJECT } from '../lib/templates.js';
+import { buildRawEmail, encodeHeader } from '../../lib/nudgeSend.mjs';
+import { buildEmail, buildSlackPing, itemLine, FIRST_SUBJECT } from '../lib/templates.js';
 import { CATEGORY } from '../lib/planner.js';
+import { threadingSelfTest, slackSelfTest } from '../lib/selfTest.js';
 
 // ---------- recipients ----------
 const base = { owner_dms_user_id: 'lead', owner_state: 'active' };
@@ -71,12 +72,15 @@ test('sync diff: a normal number of clears goes through, small categories are no
 
 test('people are collected once per owner', () => {
   const p = peopleFromIssues([
-    { owner_dms_user_id: 'u1', owner_name: 'A', owner_email: 'a@x', owner_state: 'active' },
+    { owner_dms_user_id: 'u1', owner_name: 'A', owner_email: 'a@x', owner_state: 'active', owner_manager_email: 'm@x', owner_manager_name: 'M', owner_manager_source: 'cohort' },
     { owner_dms_user_id: 'u1', owner_name: 'A', owner_email: 'a@x', owner_state: 'active' },
     { owner_dms_user_id: 'u2', owner_name: 'B', owner_email: 'b@x', owner_state: 'deleted' },
     { owner_dms_user_id: null, owner_state: 'missing' },
   ]);
   assert.deepEqual(p.map((x) => [x.dms_user_id, x.is_deleted]), [['u1', false], ['u2', true]]);
+  assert.equal(p[0].manager_email, 'm@x');
+  assert.equal(p[0].manager_source, 'cohort');
+  assert.equal(p[1].manager_email, null);
 });
 
 // ---------- mime ----------
@@ -100,18 +104,26 @@ test('mime: non-ASCII subjects are RFC 2047 encoded, ASCII ones are left alone',
 });
 
 // ---------- templates ----------
-test('email: numbered items ordered by urgency, greeting by first name, sign-off, reply instructions', () => {
+test('email: one numbered line per campaign, bullets under it, guidance once, sign-off', () => {
   const items = [
+    { issueId: 'i3', category: CATEGORY.SCREENSHOT, campaign_name: 'Xiaomi Plan 3', item_count: 1, detail: {}, nextN: 1 },
     { issueId: 'i2', category: CATEGORY.CLOSING, campaign_name: 'Zeta', item_count: 1, detail: { overdue_days: 12 }, nextN: 1 },
     { issueId: 'i1', category: CATEGORY.INVOICE, campaign_name: 'Alpha', item_count: 2, detail: {}, nextN: 1 },
+    { issueId: 'i4', category: CATEGORY.CREATOR, campaign_name: 'Xiaomi Plan 3', item_count: 1, detail: {}, nextN: 1 },
   ];
-  const { body, itemOrder } = buildEmail(items, { name: 'Priya Sharma', senderName: 'Suraj Sridhar', kind: 'first', hasInvoice: true, monthEnd: false });
+  const { body, itemNumbers } = buildEmail(items, { name: 'Priya Sharma', senderName: 'Suraj Sridhar', kind: 'first', hasInvoice: true, monthEnd: false });
   assert.match(body, /^Hi Priya,/);
-  assert.match(body, /1\. Alpha: 2 vendor invoices are pending your approval/);
-  assert.match(body, /2\. Zeta: the posting end date passed 12 days ago/);
+  assert.match(body, /1\. Alpha\n   - 2 vendor invoices awaiting your approval/);
+  assert.match(body, /2\. Xiaomi Plan 3\n   - 1 submitted creator link awaiting your approval\n   - 1 screenshot awaiting your approval/);
+  assert.match(body, /3\. Zeta\n   - posting ended 12 days ago and the campaign is still open/);
+  assert.equal((body.match(/Xiaomi Plan 3/g) || []).length, 1, 'a campaign is listed once');
+  assert.equal((body.match(/please open DMS and approve or reject each item/g) || []).length, 1, 'guidance appears once');
+  assert.match(body, /Invoices: please review the proof of work/);
+  assert.match(body, /Closings: if the campaign is still live/);
+  assert.ok(!/Proposals:/.test(body), 'no guidance for categories that are not present');
   assert.match(body, /tell me the item number and the date/);
   assert.match(body, /Thanks,\nSuraj Sridhar$/);
-  assert.deepEqual(itemOrder, ['i1', 'i2']);
+  assert.deepEqual(itemNumbers, { i1: 1, i3: 2, i4: 2, i2: 3 });
 });
 
 test('email: follow-up, final and month-end wording; "done" claims are called out', () => {
@@ -131,7 +143,32 @@ test('slack ping is short and points to the email', () => {
   assert.ok(t.length < 260);
 });
 
-test('every category has wording and the subject is stable so follow-ups thread', () => {
-  for (const c of Object.values(CATEGORY)) assert.ok(itemText({ category: c, item_count: 1, detail: {} }).length > 20);
+test('every category has a line and the subject is stable so follow-ups thread', () => {
+  for (const c of Object.values(CATEGORY)) assert.ok(itemLine({ category: c, item_count: 1, detail: {} }).length > 10);
   assert.equal(FIRST_SUBJECT, '[Action Required] Pending items on DMS');
+});
+
+// ---------- rehearsal self-test ----------
+test('threading self-test passes when the reply lands in the same conversation, fails when it does not', async () => {
+  const mk = (secondThread) => {
+    let n = 0;
+    return { email: async () => (++n === 1 ? { threadId: 'T1', rfcMessageId: '<a@mail>' } : { threadId: secondThread, rfcMessageId: '<b@mail>' }) };
+  };
+  assert.equal((await threadingSelfTest({ senders: mk('T1'), to: 'o@wldd.in', runId: 'abcdef123456' })).threaded, true);
+  assert.equal((await threadingSelfTest({ senders: mk('T2'), to: 'o@wldd.in', runId: 'abcdef123456' })).threaded, false);
+});
+
+test('threading self-test sends the second message inside the first thread', async () => {
+  const seen = [];
+  const senders = { email: async (a) => { seen.push(a); return { threadId: 'T1', rfcMessageId: '<a@mail>' }; } };
+  await threadingSelfTest({ senders, to: 'o@wldd.in', runId: 'abcdef123456' });
+  assert.equal(seen[1].threadId, 'T1');
+  assert.equal(seen[1].inReplyTo, '<a@mail>');
+  assert.match(seen[1].subject, /^Re: \[REHEARSAL SELF-TEST\]/);
+  assert.ok(seen.every((m) => m.to === 'o@wldd.in'), 'only ever to the owner');
+});
+
+test('slack self-test reports the outcome', async () => {
+  assert.equal((await slackSelfTest({ senders: { slack: async () => ({ ok: true }) }, ownerEmail: 'o@wldd.in', runId: 'r' })).ok, true);
+  assert.equal((await slackSelfTest({ senders: { slack: async () => ({ ok: false, error: 'no_slack_user' }) }, ownerEmail: 'o@wldd.in', runId: 'r' })).error, 'no_slack_user');
 });

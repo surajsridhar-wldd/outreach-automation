@@ -10,9 +10,8 @@ import { resolveRecipients } from './lib/recipients.js';
 import { planRun } from './lib/planner.js';
 import { executePlan, MODES } from './lib/executor.js';
 import { istDate } from './lib/time.js';
-import { decrypt } from './lib/crypto.js';
-import { getAccessToken, sendEmail } from './lib/gmail.js';
-import { lookupByEmail, openDm, postMessage } from './lib/slack.js';
+import { makeAppSender } from './lib/appSender.js';
+import { threadingSelfTest, slackSelfTest } from './lib/selfTest.js';
 import * as S from './lib/store.js';
 import { writeFileSync, appendFileSync } from 'node:fs';
 
@@ -48,8 +47,12 @@ export async function main(env = process.env) {
   const now = resolveNow(env.AS_OF || null, mode, realNow);
   const runId = await S.startRun(db, { mode, trigger: env.GITHUB_EVENT_NAME || 'manual' });
   const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 20000 });
+  const makeSender = () => (settings.app_base_url ? makeAppSender({ baseUrl: settings.app_base_url, key: env.SUPABASE_SERVICE_ROLE_KEY }) : null);
 
   try {
+    // Sends left unconfirmed by a run that died are flagged for the owner, never silently repeated.
+    const recovered = await S.recoverStale(db);
+
     // 1. Read Mongo (read-only) and mirror it into `issues`.
     await mongo.connect();
     const { issues: fetched, orphans } = await fetchOpenIssues(mongo.db('test'), realNow, { log: console.log });
@@ -85,22 +88,11 @@ export async function main(env = process.env) {
     for (const id of plan.exhaustedIssueIds) await S.addReviewItem(db, { kind: 'ladder_exhausted', issue_id: id, note: 'Five nudges sent without resolution.' });
 
     // 3. Execute according to the mode.
-    let senders = { email: null, slack: null };
+    // Sending goes through the website's own server, which already holds the Gmail and Slack access.
     const senderRow = await S.loadSender(db, settings.sender_user_email);
-    if (mode !== 'shadow' && plan.messages.length) {
-      const token = await getAccessToken({ clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET, refreshToken: decrypt(senderRow.gmail_refresh_token) });
-      const slackToken = decrypt(senderRow.slack_access_token);
-      senders = {
-        email: (args) => sendEmail(token, args),
-        slack: async ({ person, text }) => {
-          const slackUserId = person.slack_user_id || (await lookupByEmail(slackToken, person.email));
-          if (!slackUserId) return { ok: false, error: 'no_slack_user' };
-          const channel = person.slack_dm_channel_id || (await openDm(slackToken, slackUserId));
-          const r = await postMessage(slackToken, channel, text);
-          return { ...r, channel, slackUserId };
-        },
-      };
-    }
+    const senders = mode !== 'shadow' && (plan.messages.length || mode === 'rehearsal')
+      ? makeSender()
+      : { email: null, slack: null };
     const issuesById = new Map(openRows.map((r) => [r.id, r]));
     const exec = await executePlan({
       plan, mode, now, runId, store: S.executorStore(db), senders, issuesById, people, holidays,
@@ -112,16 +104,41 @@ export async function main(env = process.env) {
     });
     if (exec.rampDone) await S.setSetting(db, 'ramp_active', false);
 
+    // Rehearsal only: prove threading and the Slack path end to end, to the owner only.
+    let selfTest = null;
+    if (mode === 'rehearsal' && senders.email) {
+      selfTest = {};
+      try { selfTest.threading = await threadingSelfTest({ senders, to: settings.rehearsal_redirect_to, runId }); } catch (e) { selfTest.threading = { threaded: false, error: e.message }; }
+      try { selfTest.slack = await slackSelfTest({ senders, ownerEmail: settings.rehearsal_redirect_to, runId }); } catch (e) { selfTest.slack = { ok: false, error: e.message }; }
+    }
+
+    // Tell the owner about anything that needs a human, by email to themselves only.
+    const notes = [];
+    if (exec.skipped === 'circuit_breaker') notes.push(`Circuit breaker stopped the run: it would have messaged ${exec.planned} people (limit ${exec.breakerLimit}). Nothing was sent.`);
+    if (diff.suspectCategories.length) notes.push(`Bad-read guard tripped: ${JSON.stringify(diff.suspectCategories)}. Nothing cleared or sent for those categories.`);
+    if (exec.failed) notes.push(`${exec.failed} email(s) failed to send. See the review list.`);
+    if (recovered) notes.push(`${recovered} earlier send(s) could not be confirmed. Please check the Sent folder.`);
+    if (selfTest && !selfTest.threading?.threaded) notes.push(`Threading self-test FAILED: ${JSON.stringify(selfTest.threading)}`);
+    if (selfTest && !selfTest.slack?.ok) notes.push(`Slack self-test failed: ${selfTest.slack?.error || 'unknown'}`);
+    if (notes.length && mode !== 'shadow' && senders.email) {
+      await senders.email({ idempotencyKey: `alert-${runId}`, to: settings.sender_user_email, cc: [], subject: '[Nudge run] needs your attention', body: `Run ${runId} (${mode}, ${plan.today}):\n\n- ${notes.join('\n- ')}\n` }).catch(() => {});
+    }
+
     const stats = {
       ...exec, today: plan.today, nudgeDay: plan.nudgeDay, monthEnd: plan.monthEnd, weeklySlot: plan.weeklySlot,
       issuesOpen: openRows.length, inserted: diff.toInsert.length, updated: diff.toUpdate.length, cleared: diff.toClear.length,
       orphans: orphans.length, suspectCategories: diff.suspectCategories, excluded: plan.excluded, planCounts: plan.counts,
+      recoveredStale: recovered, selfTest, notes,
     };
     await S.finishRun(db, runId, { ok: true, stats });
     await report({ db, runId, stats, plan });
     return stats;
   } catch (err) {
     await S.finishRun(db, runId, { ok: false, stats: {}, error: err.message }).catch(() => {});
+    // Best effort: tell the owner the run failed (email to themselves only). Never for shadow runs.
+    if (mode !== 'shadow') {
+      await makeSender()?.email({ idempotencyKey: `alert-fail-${runId}`, to: settings.sender_user_email, cc: [], subject: '[Nudge run] FAILED', body: `Run ${runId} (${mode}) failed:\n\n${err.message}\n\nNothing was sent for the messages that had not gone out yet. Details are in the GitHub Actions run.` }).catch(() => {});
+    }
     throw err;
   } finally {
     await mongo.close().catch(() => {});
@@ -139,6 +156,8 @@ async function report({ db, runId, stats, plan }) {
     `Planned messages: **${stats.planned}** (lane A ${plan.counts.laneA}, deferred ${plan.counts.laneADeferred}, lane B ${plan.counts.laneB})`,
     `Drafted ${stats.drafted}, sent ${stats.sent}, failed ${stats.failed}, Slack pings ${stats.slackPings}${stats.skipped ? `, skipped: **${stats.skipped}**` : ''}`,
     stats.suspectCategories?.length ? `Bad-read guard tripped: ${JSON.stringify(stats.suspectCategories)}` : '',
+    stats.selfTest ? `Self-test: threading ${stats.selfTest.threading?.threaded ? 'OK' : 'FAILED'}, Slack ${stats.selfTest.slack?.ok ? 'OK' : `failed (${stats.selfTest.slack?.error})`}` : '',
+    stats.notes?.length ? `Needs attention: ${stats.notes.join(' | ')}` : '',
   ].filter(Boolean).join('\n\n');
   const full = `${summary}\n\n---\n\n${rows.map((m) => `### ${m.channel} to ${m.intended_to || m.to_address || m.recipient_dms_user_id} (${m.status}, lane ${m.lane}, ${m.kind})\n**${m.subject || ''}**\n\n${m.body}\n`).join('\n')}`;
   writeFileSync('report.md', full);

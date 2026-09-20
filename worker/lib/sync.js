@@ -49,6 +49,9 @@ export function peopleFromIssues(fetched) {
       name: f.owner_name,
       email: f.owner_email,
       is_deleted: f.owner_state === 'deleted' ? true : f.owner_state === 'active' ? false : null,
+      manager_email: f.owner_manager_email ?? null,
+      manager_name: f.owner_manager_name ?? null,
+      manager_source: f.owner_manager_source ?? null,
     });
   }
   return [...byId.values()];
