@@ -17,7 +17,12 @@ on:
         required: false
         type: choice
         default: "run"
-        options: ["run", "selfcheck", "llmcheck"]
+        options: ["run", "selfcheck", "llmcheck", "carryover", "replies"]
+      apply:
+        description: "carryover only: yes = write the changes; anything else = dry run (nothing written)."
+        required: false
+        type: string
+        default: "no"
       as_of:
         description: "Optional, shadow/rehearsal only: plan as if it were this moment, e.g. 2026-09-21T05:30:00Z (= Monday 11:00 IST)."
         required: false
@@ -39,6 +44,7 @@ jobs:
     env:
       RUN_MODE: ${{ inputs.mode }}
       AS_OF: ${{ inputs.as_of }}
+      APPLY: ${{ inputs.apply }}
       MONGODB_URI: ${{ secrets.MONGODB_URI }}
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -66,6 +72,12 @@ jobs:
       - name: Model check
         if: inputs.task == 'llmcheck'
         run: node llmcheck.js
+      - name: Carry over manual history
+        if: inputs.task == 'carryover'
+        run: node carryover.js
+      - name: Read replies now
+        if: inputs.task == 'replies'
+        run: node replies-task.js
       - name: Keep the full report
         if: always()
         uses: actions/upload-artifact@v4
