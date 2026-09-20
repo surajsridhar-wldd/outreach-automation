@@ -1,12 +1,9 @@
 import { randomUUID } from "crypto";
 import { requireUser, unauthorized } from "@/lib/session";
 import { db } from "@/lib/supabase";
-import { decrypt } from "@/lib/crypto";
-import { makeDirectSender } from "@/lib/directSender.mjs";
+import { sendIssues } from "@/lib/ledgerSend.mjs";
 import { catKey, labelOf, MANUAL_CATEGORIES, normName, dedupeKey, normalizeRows, parseTable } from "@/lib/ledger.mjs";
 import { readSheet } from "@/lib/sheets";
-import { sendNow } from "@/worker/lib/manualSend.js";
-import { executorStore, loadIssuesByIds } from "@/worker/lib/store.js";
 
 // The one tracker API: every open, drafted or recently resolved issue, whether the DMS check found it or the owner
 // added it by hand, plus the actions on them. Admin only.
@@ -107,26 +104,6 @@ async function importRows(body, user) {
     if (error) result.skipped.push({ row, why: error.message }); else result.created++;
   }
   return { status: 200, ...result };
-}
-
-async function sendIssues(ids) {
-  const { data: cfg } = await db.from("settings").select("key,value").in("key", ["sender_user_email", "paused", "inventory_cc"]);
-  const c = Object.fromEntries((cfg || []).map((r) => [r.key, r.value]));
-  if (c.paused === true) return { status: 409, error: "Sending is paused. Press Resume first." };
-  const issues = await loadIssuesByIds(db, ids);
-  if (!issues.length) return { status: 400, error: "Nothing to send (already resolved?)" };
-  const { data: sender } = await db.from("users").select("name,email,gmail_address,gmail_refresh_token,slack_access_token").eq("email", c.sender_user_email).single();
-  if (!sender) return { status: 500, error: "Sender account not found" };
-  const issueIds = issues.map((i) => i.id);
-  const { data: overrides } = await db.from("issue_owners").select("*").in("issue_id", issueIds).eq("active", true);
-  const ownerIds = [...new Set([...issues.map((i) => i.owner_dms_user_id), ...(overrides || []).map((o) => o.dms_user_id)].filter(Boolean))];
-  const { data: people } = await db.from("dms_people").select("*").in("dms_user_id", ownerIds);
-  const senders = makeDirectSender({ db, decrypt, google: { clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET }, sender });
-  const r = await sendNow({
-    issues, overrides: overrides || [], people: people || [], store: executorStore(db), senders,
-    settings: { senderName: sender.name, senderEmail: sender.gmail_address, inventoryCc: c.inventory_cc || "inventory@wldd.in" },
-  });
-  return { status: 200, sent: r.sent, failed: r.failed, skippedNoEmail: r.skippedNoEmail, skippedUnreachable: r.skippedUnreachable || 0, slackPings: r.slackPings, notSent: r.skippedNoOwner };
 }
 
 export async function POST(req) {

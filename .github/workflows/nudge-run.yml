@@ -17,7 +17,7 @@ on:
         required: false
         type: choice
         default: "run"
-        options: ["run", "selfcheck", "llmcheck", "zerocheck", "carryover", "replies", "backfill"]
+        options: ["run", "selfcheck", "llmcheck", "zerocheck", "carryover", "replies", "backfill", "manualcheck"]
       apply:
         description: "carryover / backfill only: yes = write the changes; anything else = dry run (nothing written)."
         required: false
@@ -84,6 +84,9 @@ jobs:
       - name: Backfill the old tracker into the ledger
         if: inputs.task == 'backfill'
         run: node backfill.js
+      - name: Manual send end-to-end check
+        if: inputs.task == 'manualcheck'
+        run: node manualcheck.js
       - name: Keep the full report
         if: always()
         uses: actions/upload-artifact@v4

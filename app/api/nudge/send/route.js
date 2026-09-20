@@ -4,6 +4,7 @@
 import { db } from "@/lib/supabase";
 import { decrypt } from "@/lib/crypto";
 import { interpretReply } from "@/worker/lib/llm.js";
+import { sendIssues } from "@/lib/ledgerSend.mjs";
 import { verifyRequest, processSendRequest, processReadRequest, READ_TYPES } from "@/lib/nudgeSend.mjs";
 
 export const maxDuration = 30;
@@ -30,6 +31,13 @@ export async function POST(req) {
     const { data: sender, error: uErr } = await db.from("users")
       .select("gmail_address,gmail_refresh_token,slack_access_token").eq("email", setting.value).single();
     if (uErr) throw new Error(`sender: ${uErr.message}`);
+
+    // The tracker's "send now", callable by the worker for the end-to-end check.
+    if (body.type === "send_issues") {
+      if (!Array.isArray(body.ids) || !body.ids.length || body.ids.length > 25) return Response.json({ error: "1 to 25 ids" }, { status: 400 });
+      const r = await sendIssues(body.ids);
+      return Response.json(r, { status: r.error ? r.status : 200 });
+    }
 
     // Reply interpretation uses the website's own Anthropic key (Claude Haiku), so the worker needs no key.
     if (body.type === "interpret") {
