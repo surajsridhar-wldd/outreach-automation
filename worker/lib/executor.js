@@ -25,6 +25,7 @@ const prettyDate = (dateStr) => `${Number(dateStr.slice(8, 10))} ${MONTHS[Number
 export async function executePlan({
   plan, mode, now, runId, store, senders, issuesById, people,
   holidays = new Set(), recentRunCounts = [],
+  manual = false, // the owner pressed "send now": no send window, no breaker, no once-a-day rule; everything else is identical
   settings = {}, // { allowlist: [], redirectTo, senderName, senderEmail, sendWindow: {start_hour,end_hour} }
 }) {
   if (!MODES.includes(mode)) throw new Error(`Unknown mode "${mode}"`);
@@ -33,9 +34,10 @@ export async function executePlan({
     skippedNoEmail: 0, skippedAlreadyToday: 0, managerMissing: 0, skipped: null, breakerLimit: null,
   };
   const real = mode === 'live' || mode === 'canary';
+  if (manual && mode !== 'live') throw new Error('manual sends are live sends');
   const nowIso = now.toISOString();
 
-  if (real) {
+  if (real && !manual) {
     const w = settings.sendWindow || { start_hour: 11, end_hour: 19 };
     if (!inSendWindow(now, holidays, w.start_hour, w.end_hour)) return { ...stats, skipped: 'outside_send_window' };
     const br = breakerCheck(plan.messages.length, recentRunCounts);
@@ -58,7 +60,7 @@ export async function executePlan({
       await store.addReviewItem({ kind: 'needs_owner', note: `No email address on file for DMS user ${m.recipientId}` });
       continue;
     }
-    if (real && (await store.hasMessageToday(m.recipientId, plan.today))) { stats.skippedAlreadyToday++; continue; }
+    if (real && !manual && (await store.hasMessageToday(m.recipientId, plan.today))) { stats.skippedAlreadyToday++; continue; }
 
     const items = m.items.map((it) => {
       const issue = issuesById.get(it.issueId);

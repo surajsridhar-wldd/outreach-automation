@@ -36,6 +36,11 @@ export async function loadHolidays(db) {
 }
 
 export const loadOpenIssues = (db) => fetchAll(() => db.from('issues').select('*').eq('state', 'open'), 'load open issues');
+export const loadIssuesByIds = async (db, ids) => {
+  const out = [];
+  for (let i = 0; i < ids.length; i += 100) out.push(...ok(await db.from('issues').select('*').in('id', ids.slice(i, i + 100)).in('state', ['draft', 'open']), 'load issues'));
+  return out;
+};
 export const loadOverrides = (db) => fetchAll(() => db.from('issue_owners').select('*').eq('active', true), 'load owner overrides');
 export const loadPeople = (db) => fetchAll(() => db.from('dms_people').select('*'), 'load people');
 
@@ -85,10 +90,10 @@ export async function addReviewItem(db, { kind, issue_id = null, note, message_i
   ok(await db.from('review_items').insert({ kind, issue_id, note, message_in_id, payload }), 'add review item');
 }
 
-/** The owner's permanent zero-cost decisions: Map "campaign_id|service_id" -> 'exclude' | 'nudge'. */
+/** The owner's permanent zero-cost decisions: Map "campaign_id|service_id" -> { decision: 'exclude' | 'nudge', note: DMS note at that time }. */
 export async function loadZeroCostDecisions(db) {
-  const rows = ok(await db.from('zero_cost_decisions').select('campaign_id,service_id,decision'), 'load zero-cost decisions');
-  return new Map(rows.map((r) => [`${r.campaign_id}|${r.service_id}`, r.decision]));
+  const rows = ok(await db.from('zero_cost_decisions').select('campaign_id,service_id,decision,note_at_decision'), 'load zero-cost decisions');
+  return new Map(rows.map((r) => [`${r.campaign_id}|${r.service_id}`, { decision: r.decision, note: r.note_at_decision }]));
 }
 
 /**
@@ -96,12 +101,14 @@ export async function loadZeroCostDecisions(db) {
  * (open OR already marked done) it is not raised again, so "Mark done" never makes it come back.
  */
 export async function addManualVerifyOnce(db, z) {
-  const key = `${z.campaign_id}|${z.service_id}`;
+  const key = z.key || `${z.campaign_id}|${z.service_id}`;
   const prev = ok(await db.from('review_items').select('id').eq('kind', 'low_confidence').eq('payload->>key', key).limit(1), 'check manual-verify item');
   if (prev.length) return false;
   ok(await db.from('review_items').insert({
     kind: 'low_confidence', payload: { key, type: 'zero_cost', campaign_id: z.campaign_id, service_id: z.service_id, campaign_name: z.campaign_name, service: z.service, note: z.note },
-    note: `Zero-cost service needs a check (AI or Chiraiya, no clear "done by our team"): ${z.campaign_name}, ${z.service}. Note: ${z.note || '(none)'}`,
+    note: z.reason === 'note changed'
+      ? `Zero-cost service: the DMS note changed since you excluded it, so please check again: ${z.campaign_name}, ${z.service}. New note: ${z.note || '(none)'}`
+      : `Zero-cost service needs a check (AI or Chiraiya, no clear "done by our team"): ${z.campaign_name}, ${z.service}. Note: ${z.note || '(none)'}`,
   }), 'add manual-verify item');
   return true;
 }
@@ -137,7 +144,8 @@ export function executorStore(db) {
     },
     async applySent({ issues, recipientIds, deferredIds, nowIso }) {
       for (const i of issues) {
-        ok(await db.from('issues').update({ nudge_count: i.nudgeCount + 1, last_nudged_at: nowIso }).eq('id', i.id), 'mark issue nudged');
+        // A draft (imported by hand, never sent) becomes an open issue with its first send.
+        ok(await db.from('issues').update({ nudge_count: i.nudgeCount + 1, last_nudged_at: nowIso, state: 'open' }).eq('id', i.id).in('state', ['draft', 'open']), 'mark issue nudged');
       }
       if (recipientIds.length) {
         ok(await db.from('dms_people').update({ entered_at: nowIso }).in('dms_user_id', recipientIds).is('entered_at', null), 'mark people entered');

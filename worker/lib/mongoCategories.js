@@ -213,7 +213,7 @@ export async function fetchOpenIssues(db, now = new Date(), { log, zeroDecisions
     issues.push({ ...base(CATEGORY.ZERO_COST, z.campaign, 1, { service: z.service, internal_note: z.note.slice(0, 300) }), campaign_id: `${z.campaign.campaign_id}|${z.service_id}` });
   }
   // AI-only notes and Chiraiya campaigns go to a person, not to a nudge.
-  const manualVerify = zero.review.map((z) => ({ campaign_id: z.campaign.campaign_id, service_id: z.service_id, campaign_name: z.campaign.name, service: z.service, note: z.note.slice(0, 200) }));
+  const manualVerify = zero.review.map((z) => ({ key: z.key, reason: z.reason, campaign_id: z.campaign.campaign_id, service_id: z.service_id, campaign_name: z.campaign.name, service: z.service, note: z.note.slice(0, 200) }));
   const zeroExcluded = zero.excluded.map((z) => ({ campaign_id: z.campaign.campaign_id, service_id: z.service_id, campaign_name: z.campaign.name, service: z.service, note: z.note.slice(0, 200), why: z.why }));
 
   return { issues, orphans, manualVerify, zeroExcluded };

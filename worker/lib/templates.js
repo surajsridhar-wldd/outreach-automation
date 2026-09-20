@@ -4,7 +4,7 @@
 //
 // One numbered line per CAMPAIGN, so replies like "1. done, 3. need till Friday" map to campaigns.
 
-import { CATEGORY, TIER } from './planner.js';
+import { CATEGORY, tierOf } from './planner.js';
 
 export const FIRST_SUBJECT = '[Action Required] Pending items on DMS';
 
@@ -23,7 +23,8 @@ export function itemLine(item) {
       const note = item.detail?.internal_note ? ` (Internal note: ${String(item.detail.internal_note).slice(0, 160)})` : '';
       return `${item.detail?.service || 'A service'} shows zero deliverables and zero internal cost. If it was executed, please coordinate with the Inventory team to map it. If it is planned for later, no action is needed yet. If it will never run, remove it from the campaign services${note}`;
     }
-    default: return 'needs your attention';
+    // Items the owner added by hand carry their own text (the message he used to write himself).
+    default: return item.issue_text ? String(item.issue_text).trim().replace(/\s*\n+\s*/g, ' ') : 'needs your attention';
   }
 }
 
@@ -51,7 +52,7 @@ export function buildEmail(items, ctx) {
     groups.get(key).items.push(it);
   }
   const ordered = [...groups.values()]
-    .map((g) => ({ ...g, items: [...g.items].sort((a, b) => TIER[a.category] - TIER[b.category] || a.category.localeCompare(b.category)), tier: Math.min(...g.items.map((i) => TIER[i.category])) }))
+    .map((g) => ({ ...g, items: [...g.items].sort((a, b) => tierOf(a.category) - tierOf(b.category) || a.category.localeCompare(b.category)), tier: Math.min(...g.items.map((i) => tierOf(i.category))) }))
     .sort((a, b) => a.tier - b.tier || a.name.localeCompare(b.name));
 
   const itemNumbers = {};
