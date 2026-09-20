@@ -93,8 +93,8 @@ export async function executePlan({
       to_address: to, cc_addresses: rehearse ? [] : cc, subject, body, mode,
       intended_to: rehearse ? person.email : null,
     });
-    await store.insertItems(built.itemOrder.map((issueId, idx) => ({
-      message_out_id: messageId, issue_id: issueId, item_no: idx + 1, nudge_no: m.items.find((i) => i.issueId === issueId)?.nextN ?? null,
+    await store.insertItems(m.items.map((it) => ({
+      message_out_id: messageId, issue_id: it.issueId, item_no: built.itemNumbers[it.issueId] ?? null, nudge_no: it.nextN ?? null,
     })));
 
     if (!isReal && !rehearse) { stats.drafted++; continue; }

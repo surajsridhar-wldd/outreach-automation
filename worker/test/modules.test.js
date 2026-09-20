@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveRecipients } from '../lib/recipients.js';
 import { diffIssues, peopleFromIssues } from '../lib/sync.js';
-import { buildRawEmail, encodeHeader } from '../lib/mime.js';
-import { buildEmail, buildSlackPing, itemText, FIRST_SUBJECT } from '../lib/templates.js';
+import { buildRawEmail, encodeHeader } from '../../lib/nudgeSend.mjs';
+import { buildEmail, buildSlackPing, itemLine, FIRST_SUBJECT } from '../lib/templates.js';
 import { CATEGORY } from '../lib/planner.js';
 
 // ---------- recipients ----------
@@ -100,18 +100,26 @@ test('mime: non-ASCII subjects are RFC 2047 encoded, ASCII ones are left alone',
 });
 
 // ---------- templates ----------
-test('email: numbered items ordered by urgency, greeting by first name, sign-off, reply instructions', () => {
+test('email: one numbered line per campaign, bullets under it, guidance once, sign-off', () => {
   const items = [
+    { issueId: 'i3', category: CATEGORY.SCREENSHOT, campaign_name: 'Xiaomi Plan 3', item_count: 1, detail: {}, nextN: 1 },
     { issueId: 'i2', category: CATEGORY.CLOSING, campaign_name: 'Zeta', item_count: 1, detail: { overdue_days: 12 }, nextN: 1 },
     { issueId: 'i1', category: CATEGORY.INVOICE, campaign_name: 'Alpha', item_count: 2, detail: {}, nextN: 1 },
+    { issueId: 'i4', category: CATEGORY.CREATOR, campaign_name: 'Xiaomi Plan 3', item_count: 1, detail: {}, nextN: 1 },
   ];
-  const { body, itemOrder } = buildEmail(items, { name: 'Priya Sharma', senderName: 'Suraj Sridhar', kind: 'first', hasInvoice: true, monthEnd: false });
+  const { body, itemNumbers } = buildEmail(items, { name: 'Priya Sharma', senderName: 'Suraj Sridhar', kind: 'first', hasInvoice: true, monthEnd: false });
   assert.match(body, /^Hi Priya,/);
-  assert.match(body, /1\. Alpha: 2 vendor invoices are pending your approval/);
-  assert.match(body, /2\. Zeta: the posting end date passed 12 days ago/);
+  assert.match(body, /1\. Alpha\n   - 2 vendor invoices awaiting your approval/);
+  assert.match(body, /2\. Xiaomi Plan 3\n   - 1 submitted creator link awaiting your approval\n   - 1 screenshot awaiting your approval/);
+  assert.match(body, /3\. Zeta\n   - posting ended 12 days ago and the campaign is still open/);
+  assert.equal((body.match(/Xiaomi Plan 3/g) || []).length, 1, 'a campaign is listed once');
+  assert.equal((body.match(/please open DMS and approve or reject each item/g) || []).length, 1, 'guidance appears once');
+  assert.match(body, /Invoices: please review the proof of work/);
+  assert.match(body, /Closings: if the campaign is still live/);
+  assert.ok(!/Proposals:/.test(body), 'no guidance for categories that are not present');
   assert.match(body, /tell me the item number and the date/);
   assert.match(body, /Thanks,\nSuraj Sridhar$/);
-  assert.deepEqual(itemOrder, ['i1', 'i2']);
+  assert.deepEqual(itemNumbers, { i1: 1, i3: 2, i4: 2, i2: 3 });
 });
 
 test('email: follow-up, final and month-end wording; "done" claims are called out', () => {
@@ -131,7 +139,7 @@ test('slack ping is short and points to the email', () => {
   assert.ok(t.length < 260);
 });
 
-test('every category has wording and the subject is stable so follow-ups thread', () => {
-  for (const c of Object.values(CATEGORY)) assert.ok(itemText({ category: c, item_count: 1, detail: {} }).length > 20);
+test('every category has a line and the subject is stable so follow-ups thread', () => {
+  for (const c of Object.values(CATEGORY)) assert.ok(itemLine({ category: c, item_count: 1, detail: {} }).length > 10);
   assert.equal(FIRST_SUBJECT, '[Action Required] Pending items on DMS');
 });

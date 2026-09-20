@@ -10,9 +10,7 @@ import { resolveRecipients } from './lib/recipients.js';
 import { planRun } from './lib/planner.js';
 import { executePlan, MODES } from './lib/executor.js';
 import { istDate } from './lib/time.js';
-import { decrypt } from './lib/crypto.js';
-import { getAccessToken, sendEmail } from './lib/gmail.js';
-import { lookupByEmail, openDm, postMessage } from './lib/slack.js';
+import { makeAppSender } from './lib/appSender.js';
 import * as S from './lib/store.js';
 import { writeFileSync, appendFileSync } from 'node:fs';
 
@@ -85,22 +83,11 @@ export async function main(env = process.env) {
     for (const id of plan.exhaustedIssueIds) await S.addReviewItem(db, { kind: 'ladder_exhausted', issue_id: id, note: 'Five nudges sent without resolution.' });
 
     // 3. Execute according to the mode.
-    let senders = { email: null, slack: null };
+    // Sending goes through the website's own server, which already holds the Gmail and Slack access.
     const senderRow = await S.loadSender(db, settings.sender_user_email);
-    if (mode !== 'shadow' && plan.messages.length) {
-      const token = await getAccessToken({ clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET, refreshToken: decrypt(senderRow.gmail_refresh_token) });
-      const slackToken = decrypt(senderRow.slack_access_token);
-      senders = {
-        email: (args) => sendEmail(token, args),
-        slack: async ({ person, text }) => {
-          const slackUserId = person.slack_user_id || (await lookupByEmail(slackToken, person.email));
-          if (!slackUserId) return { ok: false, error: 'no_slack_user' };
-          const channel = person.slack_dm_channel_id || (await openDm(slackToken, slackUserId));
-          const r = await postMessage(slackToken, channel, text);
-          return { ...r, channel, slackUserId };
-        },
-      };
-    }
+    const senders = mode !== 'shadow' && plan.messages.length
+      ? makeAppSender({ baseUrl: settings.app_base_url, key: env.SUPABASE_SERVICE_ROLE_KEY })
+      : { email: null, slack: null };
     const issuesById = new Map(openRows.map((r) => [r.id, r]));
     const exec = await executePlan({
       plan, mode, now, runId, store: S.executorStore(db), senders, issuesById, people, holidays,
