@@ -14,7 +14,6 @@ import { makeAppSender } from './lib/appSender.js';
 import { threadingSelfTest, slackSelfTest } from './lib/selfTest.js';
 import { fetchTeamRows, makeManagerResolver, overlayManagers } from './lib/teamSheet.js';
 import { readReplies } from './lib/replies.js';
-import { interpretReply } from './lib/llm.js';
 import * as S from './lib/store.js';
 import { writeFileSync, appendFileSync } from 'node:fs';
 
@@ -61,16 +60,17 @@ export async function main(env = process.env) {
     // 0. Read replies first, so a hold or a co-owner given this morning is respected by today's plan.
     // Only in live/canary (replies only exist for real messages) and never fatal to the run.
     let replyStats = null;
-    if ((mode === 'live' || mode === 'canary') && env.ANTHROPIC_API_KEY && makeSender()) {
+    if ((mode === 'live' || mode === 'canary') && makeSender()) {
       try {
         const [preIssues, prePeople] = await Promise.all([S.loadOpenIssues(db), S.loadPeople(db)]);
+        const replySender = makeSender();
         const senderForReplies = await S.loadSender(db, settings.sender_user_email);
         replyStats = await readReplies({
-          store: S.replyStore(db), senders: makeSender(), interpret: interpretReply, apiKey: env.ANTHROPIC_API_KEY, now: realNow, settings,
+          store: S.replyStore(db), senders: replySender, interpret: ({ prompt }) => replySender.interpret(prompt), apiKey: null, now: realNow, settings,
           people: prePeople, issuesById: new Map(preIssues.map((r) => [r.id, r])), senderEmail: senderForReplies.gmail_address, log: console.log,
         });
       } catch (e) { replyStats = { error: e.message }; }
-    } else if (mode === 'live' || mode === 'canary') replyStats = { skipped: env.ANTHROPIC_API_KEY ? 'no sender' : 'ANTHROPIC_API_KEY not set' };
+    } else if (mode === 'live' || mode === 'canary') replyStats = { skipped: 'no sender' };
 
     // 1. Read Mongo (read-only) and mirror it into `issues`.
     await mongo.connect();

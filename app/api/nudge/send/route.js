@@ -3,6 +3,7 @@
 // Supabase service key, and only company addresses are accepted.
 import { db } from "@/lib/supabase";
 import { decrypt } from "@/lib/crypto";
+import { interpretReply } from "@/worker/lib/llm.js";
 import { verifyRequest, processSendRequest, processReadRequest, READ_TYPES } from "@/lib/nudgeSend.mjs";
 
 export const maxDuration = 30;
@@ -29,6 +30,12 @@ export async function POST(req) {
     const { data: sender, error: uErr } = await db.from("users")
       .select("gmail_address,gmail_refresh_token,slack_access_token").eq("email", setting.value).single();
     if (uErr) throw new Error(`sender: ${uErr.message}`);
+
+    // Reply interpretation uses the website's own Anthropic key (Claude Haiku), so the worker needs no key.
+    if (body.type === "interpret") {
+      if (typeof body.prompt !== "string" || body.prompt.length > 8000) return Response.json({ error: "bad prompt" }, { status: 400 });
+      return Response.json(await interpretReply({ apiKey: process.env.ANTHROPIC_API_KEY, prompt: body.prompt }));
+    }
 
     // Read requests (replies, bounces). Restricted to threads/channels the nudge system itself created.
     if (READ_TYPES.has(body.type)) {
