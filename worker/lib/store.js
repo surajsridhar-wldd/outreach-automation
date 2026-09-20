@@ -181,9 +181,9 @@ export async function recoverStale(db, olderThanMinutes = 30) {
 const daysAgoIso = (now, n) => new Date(now.getTime() - n * 86_400_000).toISOString();
 
 /** Reminder emails from the last 30 days whose thread we read for replies, with the items each carried. */
-async function replyThreads(db, now) {
+async function replyThreads(db, now, windowDays = 30) {
   const outs = await fetchAll(() => db.from('messages_out').select('id,recipient_dms_user_id,gmail_thread_id,sent_at')
-    .eq('channel', 'email').eq('status', 'sent').in('mode', ['live', 'canary']).not('gmail_thread_id', 'is', null).gte('sent_at', daysAgoIso(now, 30)).order('sent_at'), 'load sent reminders');
+    .eq('channel', 'email').eq('status', 'sent').in('mode', ['live', 'canary']).not('gmail_thread_id', 'is', null).gte('sent_at', daysAgoIso(now, windowDays)).order('sent_at'), 'load sent reminders');
   const itemRows = outs.length ? await fetchAll(() => db.from('message_items').select('message_out_id,issue_id,item_no').in('message_out_id', outs.map((o) => o.id)), 'load reminder items') : [];
   const itemsByOut = new Map();
   for (const r of itemRows) itemsByOut.set(r.message_out_id, [...(itemsByOut.get(r.message_out_id) || []), r]);
@@ -216,9 +216,9 @@ async function slackConversations(db, now) {
   return [...byChannel.values()];
 }
 
-export function replyStore(db) {
+export function replyStore(db, { windowDays = 30 } = {}) {
   return {
-    replyThreads: (now) => replyThreads(db, now),
+    replyThreads: (now) => replyThreads(db, now, windowDays),
     slackConversations: (now) => slackConversations(db, now),
     async getMessageIn(channel, externalId) {
       const rows = ok(await db.from('messages_in').select('id,clean_text,from_owner,processed_at').eq('channel', channel).eq('external_id', externalId).limit(1), 'load message_in');
