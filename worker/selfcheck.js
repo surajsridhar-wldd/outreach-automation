@@ -25,7 +25,7 @@ export async function main(env = process.env) {
 
     // --- setup: two throwaway people and one issue --------------------------------------------------------
     must(await db.from('dms_people').upsert([
-      { dms_user_id: `${P}-P1`, name: 'Selfcheck One', email: 'selfcheck1@wldd.in' },
+      { dms_user_id: `${P}-P1`, name: 'Selfcheck One', email: 'selfcheck1@wldd.in', skipped_count: 0 },
       { dms_user_id: `${P}-P2`, name: 'Selfcheck Two', email: 'selfcheck2@wldd.in', skipped_count: 1 },
     ], { onConflict: 'dms_user_id' }), 'seed people');
     const issue = must(await db.from('issues').insert({
