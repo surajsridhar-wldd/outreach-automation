@@ -20,7 +20,7 @@ export default function Nav() {
     { href:"/stats",    label:"Frequency" },
     { href:"/settings", label:"Settings" },
   ];
-  if (me?.role === "admin") links.push({ href:"/nudges", label:"Nudges" }, { href:"/admin", label:"Admin ★" });
+  if (me?.role === "admin") links.push({ href:"/admin", label:"Admin ★" });
 
   async function logout() {
     await fetch("/api/auth/logout", { method:"POST" });
