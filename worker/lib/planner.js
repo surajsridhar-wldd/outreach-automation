@@ -221,3 +221,12 @@ export function applySent({ nowIso, issues, people, plan }) {
   }
   return { issues: nextIssues, people: nextPeople };
 }
+
+/**
+ * The entry cap is per DAY. People already brought in today (by an earlier run, a retry, or a second
+ * dispatch) use it up, so the first-week volume can never be doubled by running twice.
+ */
+export function entryCapRemaining(cap, peopleRows, todayIst) {
+  const enteredToday = peopleRows.filter((p) => p.entered_at && istDate(p.entered_at) === todayIst).length;
+  return Math.max(0, cap - enteredToday);
+}

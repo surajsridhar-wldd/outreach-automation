@@ -7,11 +7,12 @@ import { MongoClient } from 'mongodb';
 import { fetchOpenIssues } from './lib/mongoCategories.js';
 import { diffIssues, peopleFromIssues } from './lib/sync.js';
 import { resolveRecipients } from './lib/recipients.js';
-import { planRun } from './lib/planner.js';
+import { planRun, entryCapRemaining } from './lib/planner.js';
 import { executePlan, MODES } from './lib/executor.js';
 import { istDate } from './lib/time.js';
 import { makeAppSender } from './lib/appSender.js';
 import { threadingSelfTest, slackSelfTest } from './lib/selfTest.js';
+import { fetchTeamRows, makeManagerResolver, overlayManagers } from './lib/teamSheet.js';
 import * as S from './lib/store.js';
 import { writeFileSync, appendFileSync } from 'node:fs';
 
@@ -58,7 +59,20 @@ export async function main(env = process.env) {
     const { issues: fetched, orphans } = await fetchOpenIssues(mongo.db('test'), realNow, { log: console.log });
     const existingOpen = await S.loadOpenIssues(db);
     const diff = diffIssues(existingOpen, fetched);
-    await S.applySync(db, { diff, people: peopleFromIssues(fetched), nowIso: realNow.toISOString() });
+    // Reporting lines: the company team sheet is the most up-to-date source; DMS cohort/pod leads are the
+    // fallback. A failure to read the sheet never stops a run.
+    let peopleToStore = peopleFromIssues(fetched);
+    let teamSheet = { used: false };
+    if (env.TEAM_SHEET_URL) {
+      try {
+        const overlay = overlayManagers(peopleToStore, makeManagerResolver(await fetchTeamRows({ url: env.TEAM_SHEET_URL })));
+        peopleToStore = overlay.people;
+        teamSheet = { used: true, ...overlay.stats };
+      } catch (e) {
+        teamSheet = { used: false, error: e.message };
+      }
+    }
+    await S.applySync(db, { diff, people: peopleToStore, nowIso: realNow.toISOString() });
     for (const s of diff.suspectCategories) {
       await S.addReviewItem(db, { kind: 'sync_guard', note: `${s.category}: ${s.wouldClear} of ${s.wasOpen} open issues vanished at once; treated as a bad read, nothing cleared or sent for this category.` });
     }
@@ -82,7 +96,9 @@ export async function main(env = process.env) {
 
     const plan = planRun({
       now, issues: plannerIssues, people: planPeople, holidays,
-      settings: { laneACap: Number(settings.lane_a_cap ?? 40), rampActive: settings.ramp_active !== false },
+      // The entry cap is per DAY: people already brought in today (e.g. by an earlier run) use it up, so a
+      // retry or a second dispatch can never double the first-week volume.
+      settings: { laneACap: entryCapRemaining(Number(settings.lane_a_cap ?? 40), peopleRows, istDate(now)), rampActive: settings.ramp_active !== false },
     });
     for (const id of plan.needsOwnerIssueIds) await S.addReviewItem(db, { kind: 'needs_owner', issue_id: id, note: 'Campaign lead is deleted, inactive or missing in DMS.' });
     for (const id of plan.exhaustedIssueIds) await S.addReviewItem(db, { kind: 'ladder_exhausted', issue_id: id, note: 'Five nudges sent without resolution.' });
@@ -116,6 +132,7 @@ export async function main(env = process.env) {
     const notes = [];
     if (exec.skipped === 'circuit_breaker') notes.push(`Circuit breaker stopped the run: it would have messaged ${exec.planned} people (limit ${exec.breakerLimit}). Nothing was sent.`);
     if (diff.suspectCategories.length) notes.push(`Bad-read guard tripped: ${JSON.stringify(diff.suspectCategories)}. Nothing cleared or sent for those categories.`);
+    if (teamSheet.error) notes.push(`Team sheet could not be read (${teamSheet.error}); managers fell back to DMS cohort/pod leads.`);
     if (exec.failed) notes.push(`${exec.failed} email(s) failed to send. See the review list.`);
     if (recovered) notes.push(`${recovered} earlier send(s) could not be confirmed. Please check the Sent folder.`);
     if (selfTest && !selfTest.threading?.threaded) notes.push(`Threading self-test FAILED: ${JSON.stringify(selfTest.threading)}`);
@@ -128,7 +145,7 @@ export async function main(env = process.env) {
       ...exec, today: plan.today, nudgeDay: plan.nudgeDay, monthEnd: plan.monthEnd, weeklySlot: plan.weeklySlot,
       issuesOpen: openRows.length, inserted: diff.toInsert.length, updated: diff.toUpdate.length, cleared: diff.toClear.length,
       orphans: orphans.length, suspectCategories: diff.suspectCategories, excluded: plan.excluded, planCounts: plan.counts,
-      recoveredStale: recovered, selfTest, notes,
+      recoveredStale: recovered, selfTest, notes, teamSheet,
     };
     await S.finishRun(db, runId, { ok: true, stats });
     await report({ db, runId, stats, plan });
@@ -157,6 +174,7 @@ async function report({ db, runId, stats, plan }) {
     `Drafted ${stats.drafted}, sent ${stats.sent}, failed ${stats.failed}, Slack pings ${stats.slackPings}${stats.skipped ? `, skipped: **${stats.skipped}**` : ''}`,
     stats.suspectCategories?.length ? `Bad-read guard tripped: ${JSON.stringify(stats.suspectCategories)}` : '',
     stats.selfTest ? `Self-test: threading ${stats.selfTest.threading?.threaded ? 'OK' : 'FAILED'}, Slack ${stats.selfTest.slack?.ok ? 'OK' : `failed (${stats.selfTest.slack?.error})`}` : '',
+    stats.teamSheet ? `Managers: ${stats.teamSheet.used ? `sheet answered for ${stats.teamSheet.fromSheet} of ${stats.teamSheet.people} people (agrees with DMS ${stats.teamSheet.agreeWithDms}, differs ${stats.teamSheet.differFromDms}); statuses ${JSON.stringify(stats.teamSheet.byStatus)}` : `sheet NOT used${stats.teamSheet.error ? ` (${stats.teamSheet.error})` : ' (not configured)'}; DMS cohort/pod leads only`}` : '',
     stats.notes?.length ? `Needs attention: ${stats.notes.join(' | ')}` : '',
   ].filter(Boolean).join('\n\n');
   const full = `${summary}\n\n---\n\n${rows.map((m) => `### ${m.channel} to ${m.intended_to || m.to_address || m.recipient_dms_user_id} (${m.status}, lane ${m.lane}, ${m.kind})\n**${m.subject || ''}**\n\n${m.body}\n`).join('\n')}`;

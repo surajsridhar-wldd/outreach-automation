@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planRun, applySent, breakerCheck, CATEGORY } from '../lib/planner.js';
+import { planRun, applySent, breakerCheck, entryCapRemaining, CATEGORY } from '../lib/planner.js';
 
 // 11:00 IST == 05:30 UTC
 const at = (date) => new Date(`${date}T05:30:00Z`);
@@ -178,4 +178,20 @@ test('circuit breaker refuses an abnormal batch', () => {
   assert.equal(breakerCheck(200, [60, 70, 80]).ok, false);  // limit = max(150, 2*70) = 150
   assert.equal(breakerCheck(200, [100, 110, 120]).ok, true); // limit = max(150, 2*110) = 220
   assert.equal(breakerCheck(400, [100, 110, 120]).ok, false);
+});
+
+test('the entry cap is per day: people already brought in today use it up, so a second run cannot double the volume', () => {
+  const rows = [
+    { entered_at: '2026-10-05T05:31:00Z' }, { entered_at: '2026-10-05T05:32:00Z' },   // today (IST) x2
+    { entered_at: '2026-10-02T05:31:00Z' }, { entered_at: null },                     // earlier / never
+  ];
+  assert.equal(entryCapRemaining(40, rows, '2026-10-05'), 38);
+  assert.equal(entryCapRemaining(2, rows, '2026-10-05'), 0);
+  assert.equal(entryCapRemaining(1, rows, '2026-10-05'), 0, 'never negative');
+  assert.equal(entryCapRemaining(40, rows, '2026-10-06'), 40);
+  // and the planner honours a cap of zero: everyone waits, nobody is dropped
+  const issues = [{ id: 'i1', category: CATEGORY.INVOICE, ownerIds: ['p1'], needsOwner: false, nudgeCount: 0, lastNudgedAt: null, holdUntil: null, firstSeenAt: '2026-10-01T00:00:00Z' }];
+  const plan = planRun({ now: new Date('2026-10-05T05:30:00Z'), issues, people: {}, settings: { laneACap: 0 } });
+  assert.equal(plan.messages.length, 0);
+  assert.deepEqual(plan.deferredRecipientIds, ['p1']);
 });
