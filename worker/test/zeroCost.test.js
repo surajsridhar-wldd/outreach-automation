@@ -48,3 +48,26 @@ test('pipeline: plan rows win over the service summary and any plan deliverable 
   assert.deepEqual(add.effDeliv.$cond[0], '$hasPlan');
   assert.deepEqual(p[0].$match.service_id.$in.sort(), Object.keys(ZERO_COST_SERVICES).sort());
 });
+
+test('the owner\'s decisions always win: exclude removes a case for good, nudge forces an AI/Chiraiya case into the nudges', () => {
+  const svc = Object.keys(ZERO_COST_SERVICES)[1];
+  const campaigns = new Map([
+    ['a', { campaign_id: 'a', name: 'A', campaign_status: 'Complete', client_id: '1' }],
+    ['e', { campaign_id: 'e', name: 'E', campaign_status: 'Active', client_id: '1' }],
+    ['i', { campaign_id: 'i', name: 'I', campaign_status: 'Active', client_id: '1' }],
+  ]);
+  const clients = new Map([['1', 'Real Client']]);
+  const rows = [
+    { campaign_id: 'a', service_id: svc, notes: ['Das did it'] },        // would be an action case
+    { campaign_id: 'e', service_id: svc, notes: ['AI videos'] },          // would go to review
+    { campaign_id: 'i', service_id: svc, notes: ['made by internal team'] }, // would be auto-excluded
+  ];
+  const none = classifyZeroCost(rows, campaigns, clients);
+  assert.deepEqual([none.issues.length, none.review.length, none.excluded.length], [1, 1, 1]);
+  const decided = classifyZeroCost(rows, campaigns, clients, new Map([[`a|${svc}`, 'exclude'], [`e|${svc}`, 'exclude'], [`i|${svc}`, 'nudge']]));
+  assert.deepEqual(decided.issues.map((x) => x.campaign.campaign_id), ['i']);
+  assert.deepEqual(decided.review, []);
+  assert.deepEqual(decided.excluded.map((x) => [x.campaign.campaign_id, x.why]), [['a', 'owner decision'], ['e', 'owner decision']]);
+  // an exclusion reported to the site carries the reason
+  assert.equal(none.excluded[0].why, 'note says the internal team did it');
+});

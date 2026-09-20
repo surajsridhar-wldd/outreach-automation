@@ -53,7 +53,7 @@ export default function Nudges() {
       </div>
 
       <div className="tabs">
-        {[["overview", "Overview"], ["owner", `Needs owner (${d.needsOwner.length})`], ["review", `Review (${d.review.length})`], ["tracker", "Tracker"], ["messages", "Messages"], ["replies", "Replies"]].map(([k, l]) => (
+        {[["overview", "Overview"], ["owner", `Needs owner (${d.needsOwner.length})`], ["review", `Review (${d.review.length})`], ["zero", "Zero-cost services"], ["tracker", "Tracker"], ["messages", "Messages"], ["replies", "Replies"]].map(([k, l]) => (
           <button key={k} className={`tab-btn ${tab === k ? "active" : ""}`} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
@@ -86,11 +86,40 @@ export default function Nudges() {
         <div className="tbl-wrap"><table><thead><tr><th>What</th><th>Campaign</th><th>Detail</th><th>When</th><th></th></tr></thead><tbody>
           {d.review.map((r) => (
             <tr key={r.id}><td><b>{KIND[r.kind] || r.kind}</b></td><td>{r.issues?.campaign_name || ""}</td><td>{r.note}</td><td>{when(r.created_at)}</td>
-              <td><button className="btn btn-sm" disabled={busy} onClick={() => act({ action: "resolve_review", id: r.id })}>Mark done</button></td></tr>
+              <td style={{ whiteSpace: "nowrap" }}>
+                {r.payload?.type === "zero_cost" ? (<>
+                  <button className="btn btn-sm" disabled={busy} title="Never nudge this campaign and service" onClick={() => act({ action: "zero_cost_decide", reviewId: r.id, decision: "exclude" })}>Exclude for good</button>{" "}
+                  <button className="btn btn-sm btn-primary" disabled={busy} title="Always nudge it, even though the note mentions AI or Chiraiya" onClick={() => act({ action: "zero_cost_decide", reviewId: r.id, decision: "nudge" })}>Nudge this</button>{" "}
+                </>) : null}
+                <button className="btn btn-sm" disabled={busy} onClick={() => act({ action: "resolve_review", id: r.id })}>Mark done</button>
+              </td></tr>
           ))}
           {!d.review.length && <tr><td colSpan={5}>Nothing needs you.</td></tr>}
         </tbody></table></div>
       )}
+
+      {tab === "zero" && (<>
+        <p style={{ color: "var(--dim)", marginBottom: 10 }}>
+          Services with zero deliverables and zero internal cost (Content Creation, ORM, Twitter Trend, Offline Activity) on Complete or Active campaigns. Rules are fixed and free to run: no AI is used, and every DMS check re-evaluates them from scratch.
+          Your decisions below are permanent and always win over the rules.
+        </p>
+        {d.zeroStats && <p style={{ marginBottom: 12 }}>Last check: <b>{d.zeroStats.action}</b> to nudge, <b>{d.zeroStats.needsCheck}</b> waiting for your call in Review, <b>{d.zeroStats.autoExcluded.length}</b> excluded automatically (note says the internal team did it), <b>{d.zeroStats.decidedExcluded}</b> excluded by you.</p>}
+        <h3 style={{ margin: "8px 0" }}>Your decisions ({d.zeroDecisions.length})</h3>
+        <div className="tbl-wrap"><table><thead><tr><th>Campaign</th><th>Service</th><th>Decision</th><th>When</th><th></th></tr></thead><tbody>
+          {d.zeroDecisions.map((x) => <tr key={x.id}><td>{x.campaign_name}</td><td>{x.service}</td><td>{x.decision === "exclude" ? "Never nudge" : "Always nudge"}</td><td>{when(x.decided_at)}</td>
+            <td><button className="btn btn-sm" disabled={busy} onClick={() => act({ action: "zero_cost_undo", id: x.id })}>Undo</button></td></tr>)}
+          {!d.zeroDecisions.length && <tr><td colSpan={5}>None yet.</td></tr>}
+        </tbody></table></div>
+        <h3 style={{ margin: "18px 0 8px" }}>Excluded automatically ({d.zeroStats?.autoExcluded.length ?? 0})</h3>
+        <div className="tbl-wrap"><table><thead><tr><th>Campaign</th><th>Service</th><th>Note in DMS</th></tr></thead><tbody>
+          {(d.zeroStats?.autoExcluded || []).map((x, i) => <tr key={i}><td>{x.campaign_name}</td><td>{x.service}</td><td>{x.note}</td></tr>)}
+        </tbody></table></div>
+        <h3 style={{ margin: "18px 0 8px" }}>Being nudged ({d.zeroIssues.length})</h3>
+        <div className="tbl-wrap"><table><thead><tr><th>Campaign</th><th>Service</th><th>Owner</th><th>Nudges</th><th>Note in DMS</th><th></th></tr></thead><tbody>
+          {d.zeroIssues.map((x) => <tr key={x.id}><td>{x.campaign_name}</td><td>{x.detail?.service}</td><td>{x.owner_state}</td><td>{x.nudge_count}</td><td>{x.detail?.internal_note}</td>
+            <td><button className="btn btn-sm" disabled={busy} onClick={() => act({ action: "zero_cost_exclude", campaign_id: x.campaign_id, campaign_name: x.campaign_name, service: x.detail?.service })}>Exclude for good</button></td></tr>)}
+        </tbody></table></div>
+      </>)}
 
       {tab === "tracker" && (<>
         <h3 style={{ margin: "8px 0" }}>Categories</h3>

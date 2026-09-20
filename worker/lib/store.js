@@ -78,11 +78,32 @@ export async function applySync(db, { diff, people, nowIso }) {
 }
 
 /** Open review items are de-duplicated so the same problem is not listed every run. */
-export async function addReviewItem(db, { kind, issue_id = null, note, message_in_id = null }) {
+export async function addReviewItem(db, { kind, issue_id = null, note, message_in_id = null, payload = null }) {
   let q = db.from('review_items').select('id').eq('status', 'open').eq('kind', kind);
   q = issue_id ? q.eq('issue_id', issue_id) : q.eq('note', note);
   if (ok(await q.limit(1), 'check review item').length) return;
-  ok(await db.from('review_items').insert({ kind, issue_id, note, message_in_id }), 'add review item');
+  ok(await db.from('review_items').insert({ kind, issue_id, note, message_in_id, payload }), 'add review item');
+}
+
+/** The owner's permanent zero-cost decisions: Map "campaign_id|service_id" -> 'exclude' | 'nudge'. */
+export async function loadZeroCostDecisions(db) {
+  const rows = ok(await db.from('zero_cost_decisions').select('campaign_id,service_id,decision'), 'load zero-cost decisions');
+  return new Map(rows.map((r) => [`${r.campaign_id}|${r.service_id}`, r.decision]));
+}
+
+/**
+ * A zero-cost case that needs a person. Raised once per campaign x service: if it was ever raised before
+ * (open OR already marked done) it is not raised again, so "Mark done" never makes it come back.
+ */
+export async function addManualVerifyOnce(db, z) {
+  const key = `${z.campaign_id}|${z.service_id}`;
+  const prev = ok(await db.from('review_items').select('id').eq('kind', 'low_confidence').eq('payload->>key', key).limit(1), 'check manual-verify item');
+  if (prev.length) return false;
+  ok(await db.from('review_items').insert({
+    kind: 'low_confidence', payload: { key, type: 'zero_cost', campaign_id: z.campaign_id, service_id: z.service_id, campaign_name: z.campaign_name, service: z.service, note: z.note },
+    note: `Zero-cost service needs a check (AI or Chiraiya, no clear "done by our team"): ${z.campaign_name}, ${z.service}. Note: ${z.note || '(none)'}`,
+  }), 'add manual-verify item');
+  return true;
 }
 
 /** Executor store bound to a database handle. */

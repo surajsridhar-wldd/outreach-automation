@@ -52,20 +52,29 @@ export function zeroCostPipeline() {
   ];
 }
 
-/** Rows -> { issues:[{campaign, service, note}], review:[...] } after the status/client filters and note rules. */
-export function classifyZeroCost(rows, campaignById, clientNameById) {
+/**
+ * Rows -> { issues, review, excluded } after the status/client filters, the note rules and the owner's own decisions.
+ * decisions: Map "campaign_id|service_id" -> 'exclude' | 'nudge'  (the owner's decision always wins over the note rules)
+ * No model is involved anywhere here: every sync re-evaluates the rows from scratch with these fixed rules, at no cost.
+ */
+export function classifyZeroCost(rows, campaignById, clientNameById, decisions = new Map()) {
   const issues = [];
   const review = [];
+  const excluded = [];
   for (const r of rows) {
     const campaign = campaignById.get(r.campaign_id);
     if (!campaign || !['Complete', 'Active'].includes(campaign.campaign_status)) continue;
     if (/^\s*test client\s*$/i.test(clientNameById.get(campaign.client_id) || '')) continue;
     const note = (r.notes || []).filter(Boolean).join(' | ');
-    const verdict = classifyNote(note, campaign.name);
     const service = ZERO_COST_SERVICES[r.service_id];
-    if (verdict === 'exclude') continue;
-    if (verdict === 'manual') { review.push({ campaign, service, note }); continue; }
-    issues.push({ campaign, service, note });
+    const row = { campaign, service, service_id: r.service_id, note };
+    const decision = decisions.get(`${r.campaign_id}|${r.service_id}`);
+    if (decision === 'exclude') { excluded.push({ ...row, why: 'owner decision' }); continue; }
+    if (decision === 'nudge') { issues.push(row); continue; }
+    const verdict = classifyNote(note, campaign.name);
+    if (verdict === 'exclude') { excluded.push({ ...row, why: 'note says the internal team did it' }); continue; }
+    if (verdict === 'manual') { review.push(row); continue; }
+    issues.push(row);
   }
-  return { issues, review };
+  return { issues, review, excluded };
 }
