@@ -17,7 +17,7 @@ on:
         required: false
         type: choice
         default: "run"
-        options: ["run", "selfcheck"]
+        options: ["run", "selfcheck", "llmcheck"]
       as_of:
         description: "Optional, shadow/rehearsal only: plan as if it were this moment, e.g. 2026-09-21T05:30:00Z (= Monday 11:00 IST)."
         required: false
@@ -58,11 +58,14 @@ jobs:
       - name: Unit tests
         run: npm test
       - name: Run
-        if: inputs.task != 'selfcheck'
+        if: inputs.task == 'run' || inputs.task == ''
         run: node run.js
       - name: Self-check
         if: inputs.task == 'selfcheck'
         run: node selfcheck.js
+      - name: Model check
+        if: inputs.task == 'llmcheck'
+        run: node llmcheck.js
       - name: Keep the full report
         if: always()
         uses: actions/upload-artifact@v4
