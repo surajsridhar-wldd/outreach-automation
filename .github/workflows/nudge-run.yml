@@ -12,6 +12,11 @@ on:
         type: choice
         default: ""
         options: ["", "shadow", "rehearsal"]
+      as_of:
+        description: "Optional, shadow/rehearsal only: plan as if it were this moment, e.g. 2026-09-21T05:30:00Z (= Monday 11:00 IST)."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -27,6 +32,7 @@ jobs:
     timeout-minutes: 20
     env:
       RUN_MODE: ${{ inputs.mode }}
+      AS_OF: ${{ inputs.as_of }}
       MONGODB_URI: ${{ secrets.MONGODB_URI }}
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

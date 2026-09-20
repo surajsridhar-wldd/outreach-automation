@@ -28,21 +28,34 @@ export function effectiveMode(requested, configured) {
   return requested;
 }
 
+/**
+ * AS_OF lets a shadow or rehearsal run plan "as if" it were another moment (e.g. preview Monday's
+ * messages on a Sunday). Reading Mongo and syncing always use the real time. Refused for canary/live.
+ */
+export function resolveNow(asOf, mode, realNow = new Date()) {
+  if (!asOf) return realNow;
+  if (mode === 'canary' || mode === 'live') throw new Error(`AS_OF is not allowed in ${mode} mode`);
+  const d = new Date(asOf);
+  if (Number.isNaN(d.getTime())) throw new Error(`AS_OF "${asOf}" is not a valid date-time`);
+  return d;
+}
+
 export async function main(env = process.env) {
   const db = S.makeDb(env);
-  const now = new Date();
+  const realNow = new Date();
   const settings = await S.loadSettings(db);
   const mode = effectiveMode(env.RUN_MODE || null, settings.mode || 'shadow');
+  const now = resolveNow(env.AS_OF || null, mode, realNow);
   const runId = await S.startRun(db, { mode, trigger: env.GITHUB_EVENT_NAME || 'manual' });
   const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 20000 });
 
   try {
     // 1. Read Mongo (read-only) and mirror it into `issues`.
     await mongo.connect();
-    const { issues: fetched, orphans } = await fetchOpenIssues(mongo.db('test'), now, { log: console.log });
+    const { issues: fetched, orphans } = await fetchOpenIssues(mongo.db('test'), realNow, { log: console.log });
     const existingOpen = await S.loadOpenIssues(db);
     const diff = diffIssues(existingOpen, fetched);
-    await S.applySync(db, { diff, people: peopleFromIssues(fetched), nowIso: now.toISOString() });
+    await S.applySync(db, { diff, people: peopleFromIssues(fetched), nowIso: realNow.toISOString() });
     for (const s of diff.suspectCategories) {
       await S.addReviewItem(db, { kind: 'sync_guard', note: `${s.category}: ${s.wouldClear} of ${s.wasOpen} open issues vanished at once; treated as a bad read, nothing cleared or sent for this category.` });
     }
