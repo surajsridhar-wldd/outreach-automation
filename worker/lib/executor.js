@@ -4,7 +4,9 @@
 // Modes (the only thing that decides whether anything can reach a real person):
 //   shadow    - compose and store drafts. Sends NOTHING. Does not change any state.
 //   rehearsal - send the real emails, but ONLY to settings.redirectTo (the owner), each marked
-//               with a banner saying who it would have gone to. Does not change any state.
+//               with a banner saying who it would have gone to. Capped at settings.rehearsalMax
+//               (default 10) so the owner's inbox is not flooded; the rest stay drafts. Does not
+//               change any state.
 //   canary    - send for real, but only to recipients on settings.allowlist; everyone else is
 //               stored as a draft. State advances only for what was really sent.
 //   live      - send for real to everyone the plan selected.
@@ -47,6 +49,8 @@ export async function executePlan({
   const allow = new Set((settings.allowlist || []).map((x) => String(x).toLowerCase()));
   const sentIssues = new Map();     // issueId -> nudge_count before this run
   const sentRecipients = [];
+  const rehearsalMax = settings.rehearsalMax ?? 10;
+  let rehearsalSent = 0;
 
   for (const m of plan.messages) {
     const person = people.get(m.recipientId);
@@ -77,7 +81,7 @@ export async function executePlan({
     }
 
     const isReal = mode === 'live' || (mode === 'canary' && (allow.has(person.email.toLowerCase()) || allow.has(String(person.dms_user_id).toLowerCase())));
-    const rehearse = mode === 'rehearsal';
+    const rehearse = mode === 'rehearsal' && rehearsalSent < rehearsalMax;
     const threaded = isReal && person.email_thread_id && person.email_rfc_message_id;
     const subject = rehearse ? `[REHEARSAL] ${FIRST_SUBJECT}` : threaded ? `Re: ${person.email_subject || FIRST_SUBJECT}` : FIRST_SUBJECT;
     const body = rehearse ? `${rehearsalBanner({ intendedTo: person.email, cc })}\n\n${built.body}` : built.body;
@@ -104,7 +108,7 @@ export async function executePlan({
       });
       await store.updateMessage(messageId, { status: 'sent', sent_at: nowIso, gmail_message_id: r.gmailMessageId, gmail_thread_id: r.threadId });
       stats.sent++;
-      if (!isReal) continue;                                   // rehearsal: no state change
+      if (!isReal) { rehearsalSent++; continue; }              // rehearsal: no state change
 
       await store.savePersonThread(m.recipientId, { email_thread_id: r.threadId, email_rfc_message_id: r.rfcMessageId, email_subject: FIRST_SUBJECT });
       sentRecipients.push(m.recipientId);

@@ -55,7 +55,9 @@ export async function main(env = process.env) {
     const overridesByIssue = new Map();
     for (const o of overrides) overridesByIssue.set(o.issue_id, [...(overridesByIssue.get(o.issue_id) || []), o]);
 
-    const plannerIssues = openRows.filter((r) => !suspect.has(r.category)).map((r) => {
+    // Categories can be switched on one at a time (e.g. invoice approvals first). Unset = all five.
+    const enabled = Array.isArray(settings.enabled_categories) ? new Set(settings.enabled_categories) : null;
+    const plannerIssues = openRows.filter((r) => !suspect.has(r.category) && (!enabled || enabled.has(r.category))).map((r) => {
       const { ownerIds, needsOwner } = resolveRecipients(r, overridesByIssue.get(r.id) || []);
       return { id: r.id, category: r.category, ownerIds, needsOwner, nudgeCount: r.nudge_count, lastNudgedAt: r.last_nudged_at, holdUntil: r.hold_until, firstSeenAt: r.first_seen_at };
     });
@@ -92,7 +94,7 @@ export async function main(env = process.env) {
       recentRunCounts: recentCounts,
       settings: {
         senderName: senderRow.name, senderEmail: senderRow.gmail_address, redirectTo: settings.rehearsal_redirect_to,
-        allowlist: settings.canary_allowlist || [], sendWindow: settings.send_window,
+        allowlist: settings.canary_allowlist || [], sendWindow: settings.send_window, rehearsalMax: settings.rehearsal_max,
       },
     });
     if (exec.rampDone) await S.setSetting(db, 'ramp_active', false);

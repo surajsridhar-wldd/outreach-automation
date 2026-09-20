@@ -184,3 +184,12 @@ test('3rd nudge adds ONE short Slack ping; 4th nudge copies the manager, or repo
   assert.equal(st.managerMissing, 1);
   assert.equal(noBoss.store.s.reviews[0].kind, 'manager_missing');
 });
+
+test('rehearsal is capped so the owner\'s inbox is not flooded; the rest stay drafts', async () => {
+  const r = run({ settings: { rehearsalMax: 2 } });
+  const stats = await r.exec('rehearsal');
+  assert.equal(stats.sent, 2);
+  assert.equal(stats.drafted, 1);
+  assert.equal(r.senders.sent.emails.length, 2);
+  assert.equal(r.store.s.applied, null);
+});
