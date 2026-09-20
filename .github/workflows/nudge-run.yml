@@ -1,0 +1,59 @@
+name: Nudge run
+
+# Started on time by a Supabase pg_cron job calling the workflow_dispatch API (GitHub's own
+# schedule is too late and too irregular for an 11:00 IST send window). It can also be started by
+# hand from the Actions tab.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Optional: force a SAFER mode for this run (shadow or rehearsal). Leave empty to use the database setting."
+        required: false
+        type: choice
+        default: ""
+        options: ["", "shadow", "rehearsal"]
+
+permissions:
+  contents: read
+
+# Never two runs at once.
+concurrency:
+  group: nudge-run
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RUN_MODE: ${{ inputs.mode }}
+      MONGODB_URI: ${{ secrets.MONGODB_URI }}
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+      GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+      GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - run: npm ci
+      - name: Unit tests
+        run: npm test
+      - name: Run
+        run: node run.js
+      - name: Keep the full report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: report
+          path: worker/report.md
+          if-no-files-found: ignore
+          retention-days: 30
