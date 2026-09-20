@@ -48,3 +48,21 @@ test('carry-over never lowers what the ledger already has', () => {
   });
   assert.equal(p.issueUpdates.length, 0);
 });
+
+test('zero-cost records match on campaign, person AND service', () => {
+  const zi = [
+    { id: 'z1', category: 'zero_cost_services', campaign_name: 'Rapido August', owner_dms_user_id: 'u1', detail: { service: 'Twitter Trend' }, nudge_count: 0, last_nudged_at: null },
+    { id: 'z2', category: 'zero_cost_services', campaign_name: 'Rapido August', owner_dms_user_id: 'u1', detail: { service: 'Content Creation / Illustration Work' }, nudge_count: 0, last_nudged_at: null },
+  ];
+  const p = planCarryOver({
+    records: [
+      { id: 'r1', category: 'NO_SERVOCE_COST', campaign: 'Rapido August', contactEmail: 'priya@wldd.in', gmail_thread_id: 'T9', issueText: 'This campaign has Twitter Trend recorded with zero deliverables' },
+      { id: 'r2', category: 'NO_SERVOCE_COST', campaign: 'Rapido August', contactEmail: 'priya@wldd.in', gmail_thread_id: 'T10', issueText: 'This campaign has ORM recorded with zero deliverables' },
+    ],
+    history: new Map([['r1', h('2026-08-20T05:00:00Z', '2026-08-25T05:00:00Z')], ['r2', h('2026-08-20T05:00:00Z')]]),
+    issues: zi, people,
+  });
+  assert.deepEqual(p.issueUpdates.map((u) => [u.id, u.nudge_count]), [['z1', 2]]);
+  assert.equal(p.threads.length, 1); assert.equal(p.threads[0].threadId, 'T9');
+  assert.equal(p.skipped.length, 1, 'the ORM record has no matching ORM issue');
+});

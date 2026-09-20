@@ -8,8 +8,8 @@ const db = S.makeDb(process.env);
 const apply = process.env.APPLY === 'yes';
 const ok = ({ data, error }, what) => { if (error) throw new Error(`${what}: ${error.message}`); return data; };
 
-const legacy = ok(await db.from('outreach_records').select('id,category,status,gmail_thread_id,gmail_message_id,contacts(email,campaign)').in('status', ['active', 'no_reply']).in('category', ['PENDING_CLOSURE', 'PENDING_VENDOR_APPROVAL', 'PENDING_PROPOSAL']), 'load legacy');
-const records = legacy.map((r) => ({ id: r.id, category: r.category, campaign: r.contacts?.campaign, contactEmail: r.contacts?.email, gmail_thread_id: r.gmail_thread_id, gmail_message_id: r.gmail_message_id }));
+const legacy = ok(await db.from('outreach_records').select('id,category,status,gmail_thread_id,gmail_message_id,contacts(email,campaign,issue)').in('status', ['active', 'no_reply']).in('category', ['PENDING_CLOSURE', 'PENDING_VENDOR_APPROVAL', 'PENDING_PROPOSAL', 'NO_SERVOCE_COST']), 'load legacy');
+const records = legacy.map((r) => ({ id: r.id, category: r.category, campaign: r.contacts?.campaign, contactEmail: r.contacts?.email, issueText: r.contacts?.issue, gmail_thread_id: r.gmail_thread_id, gmail_message_id: r.gmail_message_id }));
 const history = new Map();
 for (let i = 0; i < records.length; i += 100) {
   const ids = records.slice(i, i + 100).map((r) => r.id);

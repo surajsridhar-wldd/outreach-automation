@@ -9,7 +9,19 @@ export const LEGACY_TO_CATEGORY = {
   PENDING_CLOSURE: 'pending_closings',
   PENDING_VENDOR_APPROVAL: 'invoice_approvals',
   PENDING_PROPOSAL: 'pending_proposals',
+  NO_SERVOCE_COST: 'zero_cost_services',
 };
+
+/** Zero-cost issues are per campaign AND service; the old records name the service inside the issue text. */
+export const serviceCode = (text) => {
+  const t = String(text || '');
+  if (/twitter/i.test(t)) return 'tw';
+  if (/\bORM\b/.test(t)) return 'orm';
+  if (/content creation|illustration/i.test(t)) return 'cc';
+  if (/offline/i.test(t)) return 'off';
+  return '';
+};
+const keyOf = (category, campaign, email, svcText) => `${category}|${norm(campaign)}|${String(email || '').toLowerCase()}${category === 'zero_cost_services' ? `|${serviceCode(svcText)}` : ''}`;
 
 const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
@@ -25,7 +37,7 @@ export function planCarryOver({ records, history, issues, people }) {
   for (const i of issues) {
     const owner = people.get(i.owner_dms_user_id);
     if (!owner?.email) continue;
-    byKey.set(`${i.category}|${norm(i.campaign_name)}|${owner.email.toLowerCase()}`, i);
+    byKey.set(keyOf(i.category, i.campaign_name, owner.email, i.detail?.service), i);
   }
   const skipped = [];
   const perIssue = new Map();      // issueId -> { nudges, last }
@@ -34,7 +46,7 @@ export function planCarryOver({ records, history, issues, people }) {
   for (const r of records) {
     const category = LEGACY_TO_CATEGORY[r.category];
     if (!category) continue;
-    const issue = byKey.get(`${category}|${norm(r.campaign)}|${String(r.contactEmail || '').toLowerCase()}`);
+    const issue = byKey.get(keyOf(category, r.campaign, r.contactEmail, r.issueText));
     if (!issue) { skipped.push({ id: r.id, why: 'no open issue for the same person and campaign' }); continue; }
     const sends = (history.get(r.id) || []).filter((h) => h.action === 'sent' || h.action === 'followup_sent').map((h) => new Date(h.created_at)).sort((a, b) => a - b);
     if (!sends.length) { skipped.push({ id: r.id, why: 'no send recorded' }); continue; }
