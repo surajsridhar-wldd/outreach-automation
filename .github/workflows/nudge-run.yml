@@ -12,6 +12,12 @@ on:
         type: choice
         default: ""
         options: ["", "shadow", "rehearsal"]
+      task:
+        description: "run = a normal run. selfcheck = test every database and sending path with throwaway data (sends one email to the owner)."
+        required: false
+        type: choice
+        default: "run"
+        options: ["run", "selfcheck"]
       as_of:
         description: "Optional, shadow/rehearsal only: plan as if it were this moment, e.g. 2026-09-21T05:30:00Z (= Monday 11:00 IST)."
         required: false
@@ -52,7 +58,11 @@ jobs:
       - name: Unit tests
         run: npm test
       - name: Run
+        if: inputs.task != 'selfcheck'
         run: node run.js
+      - name: Self-check
+        if: inputs.task == 'selfcheck'
+        run: node selfcheck.js
       - name: Keep the full report
         if: always()
         uses: actions/upload-artifact@v4

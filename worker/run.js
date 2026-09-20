@@ -44,7 +44,9 @@ export async function main(env = process.env) {
   const db = S.makeDb(env);
   const realNow = new Date();
   const settings = await S.loadSettings(db);
-  const mode = effectiveMode(env.RUN_MODE || null, settings.mode || 'shadow');
+  // Paused = nothing can reach a person. The run still syncs and drafts so the website stays current.
+  const paused = settings.paused === true;
+  const mode = paused ? 'shadow' : effectiveMode(env.RUN_MODE || null, settings.mode || 'shadow');
   const now = resolveNow(env.AS_OF || null, mode, realNow);
   const runId = await S.startRun(db, { mode, trigger: env.GITHUB_EVENT_NAME || 'manual' });
   const mongo = new MongoClient(env.MONGODB_URI, { serverSelectionTimeoutMS: 20000 });
@@ -145,7 +147,7 @@ export async function main(env = process.env) {
       ...exec, today: plan.today, nudgeDay: plan.nudgeDay, monthEnd: plan.monthEnd, weeklySlot: plan.weeklySlot,
       issuesOpen: openRows.length, inserted: diff.toInsert.length, updated: diff.toUpdate.length, cleared: diff.toClear.length,
       orphans: orphans.length, suspectCategories: diff.suspectCategories, excluded: plan.excluded, planCounts: plan.counts,
-      recoveredStale: recovered, selfTest, notes, teamSheet,
+      recoveredStale: recovered, selfTest, notes, teamSheet, paused,
     };
     await S.finishRun(db, runId, { ok: true, stats });
     await report({ db, runId, stats, plan });
@@ -167,7 +169,7 @@ async function report({ db, runId, stats, plan }) {
   const { data: msgs } = await db.from('messages_out').select('recipient_dms_user_id,channel,lane,kind,status,to_address,intended_to,subject,body,mode').eq('run_id', runId).order('created_at');
   const rows = msgs || [];
   const summary = [
-    `## Nudge run: ${stats.mode} (${stats.today})`,
+    `## Nudge run: ${stats.mode}${stats.paused ? ' (PAUSED)' : ''} (${stats.today})`,
     `Nudge day: **${stats.nudgeDay}**, month-end window: **${stats.monthEnd}**, weekly slot: ${stats.weeklySlot}`,
     `Issues open: **${stats.issuesOpen}** (new ${stats.inserted}, updated ${stats.updated}, cleared ${stats.cleared}, orphans ${stats.orphans})`,
     `Planned messages: **${stats.planned}** (lane A ${plan.counts.laneA}, deferred ${plan.counts.laneADeferred}, lane B ${plan.counts.laneB})`,
