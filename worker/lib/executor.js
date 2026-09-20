@@ -47,8 +47,6 @@ export async function executePlan({
   }
 
   const allow = new Set((settings.allowlist || []).map((x) => String(x).toLowerCase()));
-  const sentIssues = new Map();     // issueId -> nudge_count before this run
-  const sentRecipients = [];
   const rehearsalMax = settings.rehearsalMax ?? 10;
   let rehearsalSent = 0;
 
@@ -73,7 +71,8 @@ export async function executePlan({
 
     let cc = [];
     if (m.ccManager) {
-      if (person.manager_email) cc = [person.manager_email];
+      const manager = person.manager_override_email || person.manager_email;
+      if (manager) cc = [manager];
       else {
         stats.managerMissing++;
         await store.addReviewItem({ kind: 'manager_missing', note: `${person.name} reached nudge 4+ but has no manager on file, so nobody was copied.` });
@@ -99,54 +98,61 @@ export async function executePlan({
 
     if (!isReal && !rehearse) { stats.drafted++; continue; }
 
+    // Only a failure of the SEND itself counts as "failed". Once the email has gone out, any
+    // bookkeeping error below is allowed to abort the run: the message row stays 'sending' (later
+    // flagged as unconfirmed), which is far safer than recording a delivered email as failed.
+    let r;
     try {
-      const r = await senders.email({
+      r = await senders.email({
+        idempotencyKey: messageId,
         from: settings.senderEmail, to, cc: rehearse ? [] : cc, subject, body,
         threadId: threaded ? person.email_thread_id : undefined,
         inReplyTo: threaded ? person.email_rfc_message_id : undefined,
         references: threaded ? person.email_rfc_message_id : undefined,
       });
-      await store.updateMessage(messageId, { status: 'sent', sent_at: nowIso, gmail_message_id: r.gmailMessageId, gmail_thread_id: r.threadId });
-      stats.sent++;
-      if (!isReal) { rehearsalSent++; continue; }              // rehearsal: no state change
-
-      await store.savePersonThread(m.recipientId, { email_thread_id: r.threadId, email_rfc_message_id: r.rfcMessageId, email_subject: FIRST_SUBJECT });
-      sentRecipients.push(m.recipientId);
-      for (const it of m.items) sentIssues.set(it.issueId, issuesById.get(it.issueId)?.nudge_count ?? 0);
-
-      // One short Slack ping, at the 3rd nudge only, pointing back to the email.
-      if (m.items.some((i) => i.nextN === 3)) {
-        const text = buildSlackPing({ name: person.name, count: m.items.length, emailDate: prettyDate(plan.today) });
-        const slackId = await store.insertMessage({
-          run_id: runId, recipient_dms_user_id: m.recipientId, channel: 'slack', lane: m.lane, kind: 'followup',
-          status: 'sending', body: text, mode,
-        });
-        try {
-          const s = await senders.slack({ person, text });
-          await store.updateMessage(slackId, { status: s.ok ? 'sent' : 'failed', sent_at: nowIso, slack_ts: s.ts, slack_channel_id: s.channel, error: s.ok ? null : s.error });
-          if (s.ok) {
-            stats.slackPings++;
-            await store.savePersonThread(m.recipientId, { slack_user_id: s.slackUserId, slack_dm_channel_id: s.channel });
-          }
-        } catch (e) {
-          await store.updateMessage(slackId, { status: 'failed', error: e.message });
-        }
-      }
     } catch (e) {
       stats.failed++;
       await store.updateMessage(messageId, { status: 'failed', error: e.message });
       await store.addReviewItem({ kind: 'send_failed', note: `Email to ${person.email} failed: ${e.message}` });
+      continue;
+    }
+
+    await store.updateMessage(messageId, { status: 'sent', sent_at: nowIso, gmail_message_id: r.gmailMessageId, gmail_thread_id: r.threadId });
+    stats.sent++;
+    if (!isReal) { rehearsalSent++; continue; }              // rehearsal: no state change
+
+    await store.savePersonThread(m.recipientId, { email_thread_id: r.threadId, email_rfc_message_id: r.rfcMessageId, email_subject: FIRST_SUBJECT });
+    // State moves forward immediately, message by message, so a run killed half way never
+    // forgets a message that really went out.
+    await store.applySent({
+      issues: m.items.map((it) => ({ id: it.issueId, nudgeCount: issuesById.get(it.issueId)?.nudge_count ?? 0 })),
+      recipientIds: [m.recipientId], deferredIds: [], nowIso,
+    });
+
+    // One short Slack ping, at the 3rd nudge only, pointing back to the email. A failure here never
+    // affects the email that already went out.
+    if (m.items.some((i) => i.nextN === 3)) {
+      const text = buildSlackPing({ name: person.name, count: m.items.length, emailDate: prettyDate(plan.today) });
+      const slackId = await store.insertMessage({
+        run_id: runId, recipient_dms_user_id: m.recipientId, channel: 'slack', lane: m.lane, kind: 'followup',
+        status: 'sending', body: text, mode,
+      });
+      try {
+        const sl = await senders.slack({ person, text, idempotencyKey: slackId });
+        await store.updateMessage(slackId, { status: sl.ok ? 'sent' : 'failed', sent_at: nowIso, slack_ts: sl.ts, slack_channel_id: sl.channel, error: sl.ok ? null : sl.error });
+        if (sl.ok) {
+          stats.slackPings++;
+          await store.savePersonThread(m.recipientId, { slack_user_id: sl.slackUserId, slack_dm_channel_id: sl.channel });
+        }
+      } catch (e) {
+        await store.updateMessage(slackId, { status: 'failed', error: e.message });
+      }
     }
   }
 
-  if (real && sentRecipients.length) {
-    await store.applySent({
-      issues: [...sentIssues].map(([id, nudgeCount]) => ({ id, nudgeCount })),
-      recipientIds: sentRecipients,
-      // The entry cap only exists in live mode; a canary must not age the real waiting queue.
-      deferredIds: mode === 'live' ? plan.deferredRecipientIds : [],
-      nowIso,
-    });
+  // The entry cap only exists in live mode; a canary must not age the real waiting queue.
+  if (mode === 'live' && plan.deferredRecipientIds.length) {
+    await store.applySent({ issues: [], recipientIds: [], deferredIds: plan.deferredRecipientIds, nowIso });
   }
   return { ...stats, rampDone: mode === 'live' && plan.rampDone, todayIst: istDate(now) };
 }

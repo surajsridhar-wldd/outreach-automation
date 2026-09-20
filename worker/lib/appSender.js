@@ -17,7 +17,7 @@ export function makeAppSender({ baseUrl, key, fetchImpl = fetch, now = () => Dat
     return data;
   }
   return {
-    email: (a) => call({ type: 'email', to: a.to, cc: a.cc || [], subject: a.subject, body: a.body, threadId: a.threadId, inReplyTo: a.inReplyTo, references: a.references }),
-    slack: ({ person, text }) => call({ type: 'slack', email: person.email, slackUserId: person.slack_user_id, dmChannelId: person.slack_dm_channel_id, text }),
+    email: (a) => call({ type: 'email', idempotencyKey: a.idempotencyKey, to: a.to, cc: a.cc || [], subject: a.subject, body: a.body, threadId: a.threadId, inReplyTo: a.inReplyTo, references: a.references }),
+    slack: ({ person, text, idempotencyKey }) => call({ type: 'slack', idempotencyKey, email: person.email, slackUserId: person.slack_user_id, dmChannelId: person.slack_dm_channel_id, text }),
   };
 }

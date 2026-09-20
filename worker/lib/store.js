@@ -91,7 +91,7 @@ export function executorStore(db) {
     async hasMessageToday(recipientId, todayIst) {
       const startUtc = new Date(`${todayIst}T00:00:00+05:30`).toISOString();
       const rows = ok(await db.from('messages_out').select('id').eq('recipient_dms_user_id', recipientId)
-        .in('status', ['sending', 'sent']).in('mode', ['live', 'canary']).gte('created_at', startUtc).limit(1), 'check messages today');
+        .in('status', ['sending', 'sent', 'unknown']).in('mode', ['live', 'canary']).gte('created_at', startUtc).limit(1), 'check messages today');
       return rows.length > 0;
     },
     async insertMessage(row) {
@@ -111,12 +111,29 @@ export function executorStore(db) {
       for (const i of issues) {
         ok(await db.from('issues').update({ nudge_count: i.nudgeCount + 1, last_nudged_at: nowIso }).eq('id', i.id), 'mark issue nudged');
       }
-      ok(await db.from('dms_people').update({ entered_at: nowIso }).in('dms_user_id', recipientIds).is('entered_at', null), 'mark people entered');
-      ok(await db.from('dms_people').update({ skipped_count: 0 }).in('dms_user_id', recipientIds), 'reset skips');
+      if (recipientIds.length) {
+        ok(await db.from('dms_people').update({ entered_at: nowIso }).in('dms_user_id', recipientIds).is('entered_at', null), 'mark people entered');
+        ok(await db.from('dms_people').update({ skipped_count: 0 }).in('dms_user_id', recipientIds), 'reset skips');
+      }
       if (deferredIds.length) {
         const rows = ok(await db.from('dms_people').select('dms_user_id,skipped_count').in('dms_user_id', deferredIds), 'load skips');
         for (const r of rows) ok(await db.from('dms_people').update({ skipped_count: (r.skipped_count || 0) + 1 }).eq('dms_user_id', r.dms_user_id), 'bump skip');
       }
     },
   };
+}
+
+/**
+ * A run that died between "sending" and confirmation leaves rows stuck in 'sending'. We cannot know
+ * whether Gmail delivered them, so they become 'unknown' (still counted as "messaged today" so nobody is
+ * emailed twice) and the owner is asked to check the Sent folder.
+ */
+export async function recoverStale(db, olderThanMinutes = 30) {
+  const cutoff = new Date(Date.now() - olderThanMinutes * 60_000).toISOString();
+  const rows = ok(await db.from('messages_out').select('id,recipient_dms_user_id,to_address,created_at').eq('status', 'sending').lt('created_at', cutoff), 'find stale sends');
+  for (const r of rows) {
+    ok(await db.from('messages_out').update({ status: 'unknown', error: 'Run ended before delivery was confirmed' }).eq('id', r.id), 'mark stale send');
+    await addReviewItem(db, { kind: 'send_failed', note: `Unconfirmed send to ${r.to_address || r.recipient_dms_user_id} (${r.created_at}). Check the Sent folder: it may or may not have gone out.` });
+  }
+  return rows.length;
 }

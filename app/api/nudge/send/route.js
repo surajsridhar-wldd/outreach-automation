@@ -27,10 +27,28 @@ export async function POST(req) {
       .select("gmail_address,gmail_refresh_token,slack_access_token").eq("email", setting.value).single();
     if (uErr) throw new Error(`sender: ${uErr.message}`);
 
-    const result = await processSendRequest(body, sender, {
-      decrypt,
-      google: { clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET },
-    });
+    // A retried request with the same key can never send twice: the key is claimed BEFORE sending.
+    const key = typeof body.idempotencyKey === "string" ? body.idempotencyKey : null;
+    if (key) {
+      const { error: claimErr } = await db.from("send_log").insert({ idempotency_key: key, status: "pending" });
+      if (claimErr) {
+        const { data: prev } = await db.from("send_log").select("status,result").eq("idempotency_key", key).single();
+        if (prev?.status === "done") return Response.json({ ...prev.result, duplicate: true });
+        return Response.json({ error: "this request was already started and could not be confirmed; check the Sent folder" }, { status: 409 });
+      }
+    }
+
+    let result;
+    try {
+      result = await processSendRequest(body, sender, {
+        decrypt,
+        google: { clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET },
+      });
+    } catch (sendErr) {
+      if (key) await db.from("send_log").delete().eq("idempotency_key", key); // nothing was sent: allow a retry
+      throw sendErr;
+    }
+    if (key) await db.from("send_log").update({ status: "done", result }).eq("idempotency_key", key);
     return Response.json(result);
   } catch (e) {
     return Response.json({ error: e.message }, { status: 502 });

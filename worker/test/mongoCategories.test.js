@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   cutoffs, creatorSubmissionPipeline, screenshotApprovalPipeline, invoiceApprovalPipeline,
-  closingFilter, proposalFilter, fetchOpenIssues, SCREENSHOT_INDEX_HINT,
+  closingFilter, proposalFilter, fetchOpenIssues, SCREENSHOT_INDEX_HINT, resolveManager,
 } from '../lib/mongoCategories.js';
 import { CATEGORY } from '../lib/planner.js';
 
@@ -44,7 +44,14 @@ function fakeDb({ hintFails = false } = {}) {
     'c-close': { campaign_id: 'c-close', name: 'Closing Camp', campaign_status: 'Active', campaign_lead: 'u-missing', posting_end_date: new Date('2026-09-01T18:30:00Z') },
     'c-prop': { campaign_id: 'c-prop', name: 'Proposal Camp', campaign_status: 'Proposal', campaign_lead: null, createdAt: new Date('2026-08-20T10:00:00Z') },
   };
-  const users = [{ id: 'u-active', is_deleted: false, name: 'A', email: 'a@x' }, { id: 'u-deleted', is_deleted: true, name: 'D', email: 'd@x' }];
+  const users = [
+    { id: 'u-active', is_deleted: false, name: 'A', email: 'a@wldd.in', cohort_id: 'co1', pod_id: 'po1' },
+    { id: 'u-deleted', is_deleted: true, name: 'D', email: 'd@wldd.in' },
+    { id: 'boss1', is_deleted: false, name: 'Boss One', email: 'boss1@wldd.in' },
+    { id: 'boss2', is_deleted: false, name: 'Boss Two', email: 'boss2@wldd.in' },
+  ];
+  const cohorts = [{ cohort_id: 'co1', cohort_lead_id: 'boss1' }];
+  const pods = [{ pod_id: 'po1', pod_lead_id: 'boss2' }];
   const toArray = (rows) => ({ toArray: async () => rows });
   const calls = { hinted: 0, unhinted: 0 };
   return {
@@ -58,6 +65,8 @@ function fakeDb({ hintFails = false } = {}) {
       },
       find: (filter) => {
         if (name === 'users') return toArray(users.filter((u) => filter.id.$in.includes(u.id)));
+        if (name === 'cohorts') return toArray(cohorts.filter((c) => filter.cohort_id.$in.includes(c.cohort_id)));
+        if (name === 'pods') return toArray(pods.filter((p) => filter.pod_id.$in.includes(p.pod_id)));
         if (filter.posting_end_date) return toArray([campaigns['c-close']]);
         if (filter.createdAt) return toArray([campaigns['c-prop']]);
         return toArray(filter.campaign_id.$in.map((id) => campaigns[id]).filter(Boolean));
@@ -72,6 +81,9 @@ test('fetchOpenIssues resolves owners, drops orphans, and computes ages', async 
 
   assert.equal(by(CATEGORY.INVOICE, 'c-inv').item_count, 2);
   assert.equal(by(CATEGORY.INVOICE, 'c-inv').owner_state, 'active');
+  assert.equal(by(CATEGORY.INVOICE, 'c-inv').owner_manager_email, 'boss1@wldd.in');
+  assert.equal(by(CATEGORY.INVOICE, 'c-inv').owner_manager_source, 'cohort');
+  assert.equal(by(CATEGORY.CREATOR, 'c-cre').owner_manager_email, null, 'a deleted lead has no manager to resolve');
   assert.equal(by(CATEGORY.SCREENSHOT, 'c-inv').item_count, 4);
   assert.equal(by(CATEGORY.CREATOR, 'c-cre').owner_state, 'deleted');
   assert.equal(by(CATEGORY.CLOSING, 'c-close').owner_state, 'missing');       // lead has no user record
@@ -93,4 +105,24 @@ test('screenshot query uses the index hint and falls back to a plain scan if the
   assert.equal(bad.calls.unhinted, 1);
   assert.ok(logs[0].includes(SCREENSHOT_INDEX_HINT));
   assert.ok(issues.some((i) => i.category === CATEGORY.SCREENSHOT));
+});
+
+// ---------- reporting manager ----------
+const mgr = (id, over = {}) => [id, { id, is_deleted: false, name: id, email: `${id}@wldd.in`, ...over }];
+test('manager: the cohort lead if usable, otherwise the pod lead, otherwise nobody', () => {
+  const users = new Map([mgr('c'), mgr('p')]);
+  const me = { id: 'me' };
+  assert.deepEqual(resolveManager(me, 'c', 'p', users).manager_source, 'cohort');
+  assert.equal(resolveManager(me, 'c', 'p', users).manager_email, 'c@wldd.in');
+  assert.equal(resolveManager(me, 'me', 'p', users).manager_source, 'pod');           // I lead my own cohort
+  assert.equal(resolveManager(me, undefined, 'p', users).manager_source, 'pod');      // no cohort at all
+  assert.equal(resolveManager(me, 'me', 'me', users).manager_email, null);            // top of the structure
+});
+
+test('manager: deleted accounts and non-company emails are never used', () => {
+  const users = new Map([mgr('c', { is_deleted: true }), mgr('p', { email: 'boss@gmail.com' }), mgr('q')]);
+  const me = { id: 'me' };
+  assert.equal(resolveManager(me, 'c', 'p', users).manager_email, null);
+  assert.equal(resolveManager(me, 'c', 'q', users).manager_email, 'q@wldd.in');
+  assert.equal(resolveManager(me, 'ghost', 'ghost', users).manager_email, null);
 });

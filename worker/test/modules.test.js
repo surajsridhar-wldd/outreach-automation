@@ -5,6 +5,7 @@ import { diffIssues, peopleFromIssues } from '../lib/sync.js';
 import { buildRawEmail, encodeHeader } from '../../lib/nudgeSend.mjs';
 import { buildEmail, buildSlackPing, itemLine, FIRST_SUBJECT } from '../lib/templates.js';
 import { CATEGORY } from '../lib/planner.js';
+import { threadingSelfTest, slackSelfTest } from '../lib/selfTest.js';
 
 // ---------- recipients ----------
 const base = { owner_dms_user_id: 'lead', owner_state: 'active' };
@@ -71,12 +72,15 @@ test('sync diff: a normal number of clears goes through, small categories are no
 
 test('people are collected once per owner', () => {
   const p = peopleFromIssues([
-    { owner_dms_user_id: 'u1', owner_name: 'A', owner_email: 'a@x', owner_state: 'active' },
+    { owner_dms_user_id: 'u1', owner_name: 'A', owner_email: 'a@x', owner_state: 'active', owner_manager_email: 'm@x', owner_manager_name: 'M', owner_manager_source: 'cohort' },
     { owner_dms_user_id: 'u1', owner_name: 'A', owner_email: 'a@x', owner_state: 'active' },
     { owner_dms_user_id: 'u2', owner_name: 'B', owner_email: 'b@x', owner_state: 'deleted' },
     { owner_dms_user_id: null, owner_state: 'missing' },
   ]);
   assert.deepEqual(p.map((x) => [x.dms_user_id, x.is_deleted]), [['u1', false], ['u2', true]]);
+  assert.equal(p[0].manager_email, 'm@x');
+  assert.equal(p[0].manager_source, 'cohort');
+  assert.equal(p[1].manager_email, null);
 });
 
 // ---------- mime ----------
@@ -142,4 +146,29 @@ test('slack ping is short and points to the email', () => {
 test('every category has a line and the subject is stable so follow-ups thread', () => {
   for (const c of Object.values(CATEGORY)) assert.ok(itemLine({ category: c, item_count: 1, detail: {} }).length > 10);
   assert.equal(FIRST_SUBJECT, '[Action Required] Pending items on DMS');
+});
+
+// ---------- rehearsal self-test ----------
+test('threading self-test passes when the reply lands in the same conversation, fails when it does not', async () => {
+  const mk = (secondThread) => {
+    let n = 0;
+    return { email: async () => (++n === 1 ? { threadId: 'T1', rfcMessageId: '<a@mail>' } : { threadId: secondThread, rfcMessageId: '<b@mail>' }) };
+  };
+  assert.equal((await threadingSelfTest({ senders: mk('T1'), to: 'o@wldd.in', runId: 'abcdef123456' })).threaded, true);
+  assert.equal((await threadingSelfTest({ senders: mk('T2'), to: 'o@wldd.in', runId: 'abcdef123456' })).threaded, false);
+});
+
+test('threading self-test sends the second message inside the first thread', async () => {
+  const seen = [];
+  const senders = { email: async (a) => { seen.push(a); return { threadId: 'T1', rfcMessageId: '<a@mail>' }; } };
+  await threadingSelfTest({ senders, to: 'o@wldd.in', runId: 'abcdef123456' });
+  assert.equal(seen[1].threadId, 'T1');
+  assert.equal(seen[1].inReplyTo, '<a@mail>');
+  assert.match(seen[1].subject, /^Re: \[REHEARSAL SELF-TEST\]/);
+  assert.ok(seen.every((m) => m.to === 'o@wldd.in'), 'only ever to the owner');
+});
+
+test('slack self-test reports the outcome', async () => {
+  assert.equal((await slackSelfTest({ senders: { slack: async () => ({ ok: true }) }, ownerEmail: 'o@wldd.in', runId: 'r' })).ok, true);
+  assert.equal((await slackSelfTest({ senders: { slack: async () => ({ ok: false, error: 'no_slack_user' }) }, ownerEmail: 'o@wldd.in', runId: 'r' })).error, 'no_slack_user');
 });
