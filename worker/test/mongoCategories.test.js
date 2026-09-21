@@ -34,9 +34,9 @@ test('closings exclude On Hold; proposals are Proposal status only', () => {
 // A tiny in-memory stand-in for the Mongo driver.
 function fakeDb({ hintFails = false } = {}) {
   const data = {
-    invoices: [{ _id: 'c-inv', item_count: 2 }],
-    creator: [{ _id: 'c-cre', item_count: 3 }, { _id: 'c-gone', item_count: 1 }],
-    shots: [{ _id: 'c-inv', item_count: 4 }],
+    invoices: [{ _id: 'c-inv', item_count: 2, items: [{ key: 'inv1', at: new Date('2026-09-01T00:00:00Z') }, { key: 'inv2', at: new Date('2026-09-10T00:00:00Z') }] }],
+    creator: [{ _id: 'c-cre', item_count: 3, items: [{ key: 's1', at: null }] }, { _id: 'c-gone', item_count: 1 }],
+    shots: [{ _id: 'c-inv', item_count: 4, items: [{ key: 'sub9', at: null }] }],
     zero: [{ campaign_id: 'c-zero', service_id: 'cff61057-86a9-4dbc-968f-ee7be97fcf1e', notes: ['Das will do it'] }],
   };
   const campaigns = {
@@ -67,6 +67,7 @@ function fakeDb({ hintFails = false } = {}) {
         return toArray(data.creator);
       },
       find: (filter) => {
+        if (name === 'deliverable_screenshots') return { sort: () => toArray([{ _id: 'shotB', submission_id: 'sub9', createdAt: new Date('2026-09-20T00:00:00Z') }, { _id: 'shotA', submission_id: 'sub9', createdAt: new Date('2026-09-01T00:00:00Z') }]) };
         if (name === 'clients') return toArray([{ client_id: 'cl1', name: 'Some Client' }]);
         if (name === 'users') return toArray(users.filter((u) => filter.id.$in.includes(u.id)));
         if (name === 'cohorts') return toArray(cohorts.filter((c) => filter.cohort_id.$in.includes(c.cohort_id)));
@@ -95,6 +96,9 @@ test('fetchOpenIssues resolves owners, drops orphans, and computes ages', async 
   assert.equal(by(CATEGORY.PROPOSAL, 'c-prop').owner_state, 'missing');       // no lead at all
   assert.equal(by(CATEGORY.PROPOSAL, 'c-prop').detail.pending_days, 30);
   assert.deepEqual(orphans, [{ category: CATEGORY.CREATOR, campaign_id: 'c-gone', item_count: 1 }]);
+  assert.deepEqual(by(CATEGORY.INVOICE, 'c-inv').items.map((x) => x.key), ['inv1', 'inv2']);
+  assert.equal(by(CATEGORY.INVOICE, 'c-inv').items[0].at, '2026-09-01T00:00:00.000Z');
+  assert.deepEqual(by(CATEGORY.SCREENSHOT, 'c-inv').items.map((x) => x.key), ['sub9:shotB'], 'a screenshot item is the LATEST upload');
   const zero = issues.find((i) => i.category === CATEGORY.ZERO_COST);
   assert.equal(zero.campaign_id, 'c-zero|cff61057-86a9-4dbc-968f-ee7be97fcf1e');   // one issue per campaign x service
   assert.equal(zero.detail.service, 'ORM');

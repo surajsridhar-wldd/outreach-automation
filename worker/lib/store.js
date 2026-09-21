@@ -2,6 +2,7 @@
 // error so a run fails loudly instead of half-writing silently.
 
 import { createClient } from '@supabase/supabase-js';
+import { planItemSync, planItemNudge, MAIN } from './items.js';
 
 export function makeDb(env = process.env) {
   return createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
@@ -79,7 +80,34 @@ export async function applySync(db, { diff, people, nowIso }) {
   }
   for (const ids of chunk(diff.toClear.map((r) => r.id), 200)) {
     ok(await db.from('issues').update({ state: 'cleared', cleared_at: nowIso, clear_reason: 'no_longer_flagged_by_mongo' }).in('id', ids), 'clear issues');
+    ok(await db.from('issue_items').update({ state: 'cleared', cleared_at: nowIso }).in('issue_id', ids).eq('state', 'open'), 'clear items of cleared issues');
   }
+}
+
+/**
+ * Keeps one row per pending item in step with DMS. Only issues DMS still flags are touched (so a suspect / failed read of a
+ * category never clears anything). openIssues = issue rows (with ids); fetched = the rows read from Mongo this run.
+ */
+export async function syncItems(db, { openIssues, fetched, nowIso }) {
+  const keyOf = (x) => `${x.category}::${x.campaign_id}`;
+  const wantedByKey = new Map(fetched.map((f) => [keyOf(f), f.items?.length ? f.items : [{ key: MAIN, at: null }]]));
+  const issues = openIssues.filter((i) => wantedByKey.has(keyOf(i)));
+  const existing = await fetchAll(() => db.from('issue_items').select('id,issue_id,item_key,nudge_count,last_nudged_at').eq('state', 'open'), 'load items');
+  const byIssue = new Map();
+  for (const e of existing) byIssue.set(e.issue_id, [...(byIssue.get(e.issue_id) || []), e]);
+  const stats = { inserted: 0, cleared: 0, issuesUpdated: 0, holdsReleased: 0 };
+  const inserts = []; const clears = [];
+  for (const issue of issues) {
+    const plan = planItemSync({ issue, wanted: wantedByKey.get(keyOf(issue)), existing: byIssue.get(issue.id) || [], nowIso });
+    inserts.push(...plan.insert); clears.push(...plan.clear);
+    const patch = { ...(plan.issueUpdate || {}) };
+    if (plan.releaseHold && issue.hold_until) { patch.hold_until = null; patch.hold_reason = 'released: a new item appeared'; stats.holdsReleased++; }
+    if (Object.keys(patch).length) { ok(await db.from('issues').update(patch).eq('id', issue.id), 'update issue from items'); stats.issuesUpdated++; }
+  }
+  for (const rows of chunk(inserts, 200)) ok(await db.from('issue_items').upsert(rows, { onConflict: 'issue_id,item_key' }), 'insert items');
+  for (const ids of chunk(clears, 200)) ok(await db.from('issue_items').update({ state: 'cleared', cleared_at: nowIso }).in('id', ids), 'clear items');
+  stats.inserted = inserts.length; stats.cleared = clears.length;
+  return stats;
 }
 
 /** Open review items are de-duplicated so the same problem is not listed every run. */
@@ -144,8 +172,13 @@ export function executorStore(db) {
     },
     async applySent({ issues, recipientIds, deferredIds, nowIso }) {
       for (const i of issues) {
-        // A draft (imported by hand, never sent) becomes an open issue with its first send.
-        ok(await db.from('issues').update({ nudge_count: i.nudgeCount + 1, last_nudged_at: nowIso, state: 'open' }).eq('id', i.id).in('state', ['draft', 'open']), 'mark issue nudged');
+        // Every pending item of the issue gets one more nudge; the issue follows its most-chased item. A draft (imported by
+        // hand, never sent) becomes an open issue with its first send.
+        const items = ok(await db.from('issue_items').select('id,item_key,nudge_count').eq('issue_id', i.id).eq('state', 'open'), 'load items');
+        const plan = planItemNudge({ issue: { nudge_count: i.nudgeCount }, items, nowIso });
+        if (plan.createMain) ok(await db.from('issue_items').upsert({ issue_id: i.id, item_key: MAIN, first_seen_at: nowIso, nudge_count: plan.items[0].nudge_count, last_nudged_at: nowIso }, { onConflict: 'issue_id,item_key' }), 'create main item');
+        else for (const it of plan.items) ok(await db.from('issue_items').update({ nudge_count: it.nudge_count, last_nudged_at: nowIso }).eq('id', it.id), 'nudge item');
+        ok(await db.from('issues').update({ ...plan.issueUpdate, state: 'open' }).eq('id', i.id).in('state', ['draft', 'open']), 'mark issue nudged');
       }
       if (recipientIds.length) {
         ok(await db.from('dms_people').update({ entered_at: nowIso }).in('dms_user_id', recipientIds).is('entered_at', null), 'mark people entered');

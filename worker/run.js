@@ -99,6 +99,8 @@ export async function main(env = process.env) {
       await S.addReviewItem(db, { kind: 'sync_guard', note: `${s.category}: ${s.wouldClear} of ${s.wasOpen} open issues vanished at once; treated as a bad read, nothing cleared or sent for this category.` });
     }
     const suspect = new Set(diff.suspectCategories.map((s) => s.category));
+    // Per-item tracking: every invoice / creator link / screenshot upload has its own nudge count.
+    const itemStats = await S.syncItems(db, { openIssues: (await S.loadOpenIssues(db)).filter((i) => i.source !== 'manual'), fetched, nowIso: realNow.toISOString() });
 
     // 2. Build the planner input from the freshly synced state.
     const [openRows, overrides, peopleRows, holidays, recentCounts] = await Promise.all([
@@ -170,7 +172,7 @@ export async function main(env = process.env) {
       ...exec, today: plan.today, nudgeDay: plan.nudgeDay, monthEnd: plan.monthEnd, weeklySlot: plan.weeklySlot,
       issuesOpen: openRows.length, inserted: diff.toInsert.length, updated: diff.toUpdate.length, cleared: diff.toClear.length,
       orphans: orphans.length, suspectCategories: diff.suspectCategories, excluded: plan.excluded, planCounts: plan.counts,
-      recoveredStale: recovered, selfTest, notes, teamSheet, paused, replyStats,
+      recoveredStale: recovered, itemStats, selfTest, notes, teamSheet, paused, replyStats,
       zeroCost: { action: fetched.filter((i) => i.category === 'zero_cost_services').length, autoExcluded: (zeroExcluded || []).filter((z) => z.why !== 'owner decision'), decidedExcluded: (zeroExcluded || []).filter((z) => z.why === 'owner decision').length, needsCheck: (manualVerify || []).length, newlyRaised: zeroRaised },
     };
     await S.finishRun(db, runId, { ok: true, stats });
