@@ -41,8 +41,8 @@ export function invoiceApprovalPipeline() {
     { $unwind: '$maps' },
     { $lookup: { from: 'submissions', localField: 'maps.submission_id', foreignField: 'submission_id', as: 'sub' } },
     { $unwind: '$sub' },
-    { $group: { _id: { campaign_id: '$sub.campaign_id', invoice_id: '$invoice_id' } } },
-    { $group: { _id: '$_id.campaign_id', item_count: { $sum: 1 } } },
+    { $group: { _id: { campaign_id: '$sub.campaign_id', invoice_id: '$invoice_id' }, at: { $first: '$createdAt' } } },
+    { $group: { _id: '$_id.campaign_id', item_count: { $sum: 1 }, items: { $push: { key: '$_id.invoice_id', at: '$at' } } } },
   ];
 }
 
@@ -53,7 +53,7 @@ export function invoiceApprovalPipeline() {
 export function creatorSubmissionPipeline() {
   return [
     { $match: { approved: 0, url: { $type: 'string', $regex: '\\S' }, submitted_at: { $type: 'date' } } },
-    { $group: { _id: '$campaign_id', item_count: { $sum: 1 } } },
+    { $group: { _id: '$campaign_id', item_count: { $sum: 1 }, items: { $push: { key: '$submission_id', at: '$submitted_at' } } } },
   ];
 }
 
@@ -61,7 +61,7 @@ export function creatorSubmissionPipeline() {
 export function screenshotApprovalPipeline() {
   return [
     { $match: { latest_screenshot_status: 0 } },
-    { $group: { _id: '$campaign_id', item_count: { $sum: 1 } } },
+    { $group: { _id: '$campaign_id', item_count: { $sum: 1 }, items: { $push: { key: '$submission_id', at: null } } } },
   ];
 }
 
@@ -121,6 +121,18 @@ export async function fetchOpenIssues(db, now = new Date(), { log, zeroDecisions
     [CATEGORY.SCREENSHOT]: await aggregateWithFallback(
       db.collection('creator_submissions'), screenshotApprovalPipeline(), { hint: SCREENSHOT_INDEX_HINT }, log),
   };
+
+  // A screenshot item is one UPLOAD: a new upload for the same submission is a new item with a fresh count.
+  const shotRows = perCampaignCounts[CATEGORY.SCREENSHOT] || [];
+  const submissionIds = [...new Set(shotRows.flatMap((r) => (r.items || []).map((x) => x.key)).filter(Boolean))];
+  if (submissionIds.length) {
+    const latest = new Map();
+    const docs = await db.collection('deliverable_screenshots').find({ submission_id: { $in: submissionIds } }, { projection: { submission_id: 1, createdAt: 1 } }).sort({ createdAt: -1 }).toArray();
+    for (const d of docs) if (!latest.has(d.submission_id)) latest.set(d.submission_id, d);
+    for (const r of shotRows) {
+      r.items = (r.items || []).map((x) => { const d = latest.get(x.key); return { key: d ? `${x.key}:${String(d._id)}` : `${x.key}:none`, at: d?.createdAt ?? null }; });
+    }
+  }
 
   const campaignDocs = new Map();
   const remember = (docs) => docs.forEach((c) => campaignDocs.set(c.campaign_id, c));
@@ -192,7 +204,7 @@ export async function fetchOpenIssues(db, now = new Date(), { log, zeroDecisions
     for (const row of rows) {
       const campaign = campaignDocs.get(row._id);
       if (!campaign) { orphans.push({ category, campaign_id: row._id, item_count: row.item_count }); continue; }
-      issues.push(base(category, campaign, row.item_count, {}));
+      issues.push({ ...base(category, campaign, row.item_count, {}), items: (row.items || []).map((x) => ({ key: String(x.key), at: x.at ? new Date(x.at).toISOString() : null })) });
     }
   }
   for (const c of closings) {

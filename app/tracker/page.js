@@ -263,6 +263,17 @@ function Drawer({ drawer, row, onClose, post, busy, sendNow, today, reload }) {
         <p><b>Owner:</b> {owner ? `${owner.name} (${owner.email})` : "none"}{owner?.manager_email ? ` · manager ${owner.manager_email}` : ""}</p>
         {(drawer.owners || []).filter((o) => o.active).map((o) => <p key={o.id}><b>{o.role === "co_owner" ? "Also:" : "Reassigned to:"}</b> {drawer.people?.find((p) => p.dms_user_id === o.dms_user_id)?.name || o.dms_user_id}</p>)}
         <p><b>Nudges sent:</b> {i.nudge_count}{i.false_done_claims ? ` · said “done” while still pending ${i.false_done_claims}×` : ""}{i.hold_until ? ` · snoozed to ${i.hold_until}${i.hold_reason ? ` (${i.hold_reason})` : ""}` : ""}</p>
+        {(drawer.items || []).length > 1 && (
+          <div style={{ margin: "8px 0", fontSize: 13 }}>
+            <b>Items in this issue</b> (each is counted on its own; the manager is copied when an item reaches its 4th nudge)
+            {drawer.items.map((it) => (
+              <div key={it.id} style={{ color: it.state === "open" ? "var(--text)" : "var(--faint)" }}>
+                · {it.item_key === "main" ? "the campaign" : `item …${it.item_key.slice(-6)}`}: {it.nudge_count} nudge{it.nudge_count === 1 ? "" : "s"}
+                {it.item_created_at ? `, added ${day(it.item_created_at)}` : ""}{it.state === "cleared" ? " (done)" : ""}
+              </div>
+            ))}
+          </div>
+        )}
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "12px 0" }}>
           {i.state !== "cleared" && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => sendNow([{ ...i, id: i.id }]).then(reload)}>{i.state === "draft" ? "Send now" : "Nudge now"}</button>}
           {i.state === "open" && i.hold_until >= today && <button className="btn btn-sm" disabled={busy} onClick={() => post({ action: "unsnooze", ids: [i.id] }).then(reload)}>Un-snooze</button>}
