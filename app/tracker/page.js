@@ -1,7 +1,8 @@
 "use client";
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
-import { SC, DaysChip, days, CategoryChip, BulkBar, RowMenu, catColor } from "@/components/shared";
+import { SC, DaysChip, days, CategoryChip, BulkBar, catColor } from "@/components/shared";
 import { tabOf, labelOf, describeIssue, statusOf, holdInfo, fmtDay } from "@/lib/ledger.mjs";
 
 // One tracker for everything. Issues the DMS check finds and issues you add by hand sit in the same list, follow the same
@@ -35,6 +36,34 @@ function LBadge({ palette, label }) {
     </span>
   );
 }
+// The ⋯ menu is drawn on top of the whole page (not inside the table), so it is never hidden behind the next row or clipped by
+// the table's own scrolling.
+function RowMenu({ items }) {
+  const [pos, setPos] = useState(null); const ref = useRef(null);
+  useEffect(() => {
+    if (!pos) return undefined;
+    const close = () => setPos(null);
+    window.addEventListener("click", close); window.addEventListener("scroll", close, true); window.addEventListener("resize", close);
+    return () => { window.removeEventListener("click", close); window.removeEventListener("scroll", close, true); window.removeEventListener("resize", close); };
+  }, [pos]);
+  function toggle(e) {
+    e.stopPropagation();
+    if (pos) return setPos(null);
+    const r = ref.current.getBoundingClientRect(); const h = items.length * 38 + 10;
+    setPos({ right: Math.max(8, window.innerWidth - r.right), top: r.bottom + h > window.innerHeight ? Math.max(8, r.top - h - 4) : r.bottom + 4 });
+  }
+  return (<>
+    <button ref={ref} className="btn btn-sm" onClick={toggle} title="More actions">⋯</button>
+    {pos && createPortal(
+      <div style={{ position: "fixed", top: pos.top, right: pos.right, zIndex: 1000, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8, boxShadow: "0 8px 24px rgba(0,0,0,.16)", minWidth: 220, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
+        {items.map((it, i) => (
+          <button key={i} onClick={() => { setPos(null); it.onClick(); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 14px", fontSize: 13, border: "none", background: "none", cursor: "pointer", color: it.danger ? "#dc2626" : "#374151" }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "#f3f4f6"; }} onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}>{it.label}</button>
+        ))}
+      </div>, document.body)}
+  </>);
+}
+
 function Chk({ checked, onChange }) { return <div style={{ padding: "12px 8px 12px 14px" }}><input type="checkbox" style={{ width: "auto" }} checked={checked} onChange={onChange} /></div>; }
 function Cell({ children, gap, onClick, clickable }) { return <div className="row-main" style={{ cursor: clickable ? "pointer" : "default", gap: gap ? 6 : undefined }} onClick={onClick}>{children}</div>; }
 
