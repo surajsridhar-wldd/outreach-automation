@@ -43,12 +43,12 @@ console.log('SENDNOW left out:', JSON.stringify(left));
 console.log('SENDNOW people with the most items:', [...byPerson.entries()].sort((a, b) => b[1].length - a[1].length).slice(0, 5).map(([id, l]) => `${people.get(id).name} (${l.length})`).join(', '));
 if (!apply) { console.log('DRY RUN: nothing sent. Set APPLY=yes to send.'); process.exit(0); }
 
-// Batches never split a person, so everyone gets ONE email covering all their items.
-const sender = makeAppSender({ baseUrl: settings.app_base_url, key: process.env.SUPABASE_SERVICE_ROLE_KEY });
-const batches = []; let cur = [];
+// Batches never split a person (everyone gets ONE email covering all their items) and stay small: each email takes a few
+// seconds on the website's server, which has a 30-second limit per request.
+const batches = []; let cur = []; let curPeople = 0;
 for (const [, list] of byPerson) {
-  if (cur.length && cur.length + list.length > 25) { batches.push(cur); cur = []; }
-  cur.push(...list);
+  if (curPeople >= 3 || (cur.length && cur.length + list.length > 25)) { batches.push(cur); cur = []; curPeople = 0; }
+  cur.push(...list); curPeople++;
 }
 if (cur.length) batches.push(cur);
 let sent = 0, failed = 0, unsent = 0;
