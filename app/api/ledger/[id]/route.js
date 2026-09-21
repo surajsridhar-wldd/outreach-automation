@@ -10,8 +10,8 @@ export async function GET(_req, { params }) {
   const { data: issue } = await db.from("issues").select("*").eq("id", id).single();
   if (!issue) return Response.json({ error: "Not found" }, { status: 404 });
 
-  const { data: items } = await db.from("message_items").select("message_out_id,item_no,nudge_no").eq("issue_id", id);
-  const outIds = (items || []).map((i) => i.message_out_id);
+  const { data: msgItems } = await db.from("message_items").select("message_out_id,item_no,nudge_no").eq("issue_id", id);
+  const outIds = (msgItems || []).map((i) => i.message_out_id);
   const [messages, interps, owners, review, items] = await Promise.all([
     outIds.length ? db.from("messages_out").select("id,channel,kind,status,mode,to_address,cc_addresses,subject,sent_at,created_at,error").in("id", outIds).order("created_at", { ascending: true }) : { data: [] },
     db.from("interpretations").select("id,intent,promised_date,target_text,evidence,confidence,needs_review,created_at,messages_in(sender_address,received_at,clean_text)").eq("issue_id", id).order("created_at", { ascending: true }),
