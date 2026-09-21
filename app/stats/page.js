@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 export default function StatsPage() {
   const [stats, setStats] = useState([]);
   const [byCategory, setByCategory] = useState([]);
+  const [ledgerCats, setLedgerCats] = useState([]);
   const [me, setMe] = useState(null);
   const [scope, setScope] = useState("mine");
   const [downloading, setDownloading] = useState(false);
@@ -11,7 +12,7 @@ export default function StatsPage() {
   useEffect(() => { fetch("/api/me").then(r => r.json()).then(setMe); }, []);
 
   const load = useCallback(() => {
-    fetch(`/api/stats?scope=${scope}`).then(r => r.json()).then(d => { setStats(d.stats || []); setByCategory(d.byCategory || []); });
+    fetch(`/api/stats?scope=${scope}`).then(r => r.json()).then(d => { setStats(d.stats || []); setByCategory(d.byCategory || []); setLedgerCats(d.ledgerCategories || []); });
   }, [scope]);
 
   useEffect(() => { load(); }, [load]);
@@ -54,7 +55,7 @@ export default function StatsPage() {
         </div>
       </div>
       <p style={{ fontSize:13, color:"#6b7280", marginBottom:20 }}>
-        One row per POC — aggregated across all campaigns. POCs with the most outreaches or follow-ups are shown first.
+        One row per POC across all campaigns: your manual outreach plus the automated nudges. In the global view you also see how many of their issues are open now and how often they said “done” while DMS still showed it pending.
       </p>
 
       {me?.role === "admin" && (
@@ -96,6 +97,18 @@ export default function StatsPage() {
         </div>
       )}
 
+      {ledgerCats.length > 0 && (
+        <div style={{ marginBottom:28 }}>
+          <h2 style={{ fontSize:15, fontWeight:700, marginBottom:4 }}>All issues, by category</h2>
+          <p style={{ fontSize:12, color:"#6b7280", marginBottom:12 }}>Everything in the tracker, found by the DMS check or added by you: how many are open, how long they take to clear, and how many nudges it takes.</p>
+          <div className="tbl-wrap"><table>
+            <thead><tr><th>CATEGORY</th><th>OPEN</th><th>CLEARED</th><th>NUDGES SENT</th><th>AVG NUDGES TO CLEAR</th><th>AVG DAYS TO CLEAR</th><th>AVG AGE OF OPEN (DAYS)</th></tr></thead>
+            <tbody>{ledgerCats.map(c => (
+              <tr key={c.category}><td>{c.label}</td><td>{c.open_issues}</td><td>{c.cleared_issues}</td><td>{c.nudges_total}</td><td>{c.avg_nudges_before_clear ?? "—"}</td><td>{c.avg_days_to_clear ?? "—"}</td><td>{c.avg_open_age_days ?? "—"}</td></tr>
+            ))}</tbody></table></div>
+        </div>
+      )}
+
       {stats.length === 0 ? (
         <div className="empty">
           <div className="empty-icon">📊</div>
@@ -112,6 +125,9 @@ export default function StatsPage() {
               <th>OUTREACHES</th>
               <th>CAMPAIGNS</th>
               <th>FOLLOW-UPS</th>
+              {scope === "all" && <th>AUTO / SEND-NOW NUDGES</th>}
+              {scope === "all" && <th>OPEN NOW</th>}
+              {scope === "all" && <th>FALSE “DONE”</th>}
               <th>REPLY RATE</th>
               <th>AVG RESPONSE</th>
               <th>RESOLVED</th>
@@ -140,6 +156,9 @@ export default function StatsPage() {
                   <td><div className="row-main" style={{ cursor:"default" }}>
                     <span style={{ fontSize:14, fontWeight:600, color: s.total_followups >= 3 ? "#d97706" : "#6b7280" }}>{s.total_followups}</span>
                   </div></td>
+                  {scope === "all" && <td><div className="row-main" style={{ cursor:"default", fontSize:13, fontWeight:600, color:"#6b7280" }}>{s.auto_nudges ?? 0}</div></td>}
+                  {scope === "all" && <td><div className="row-main" style={{ cursor:"default", fontSize:13, color:"#6b7280" }}>{s.open_now ?? 0}</div></td>}
+                  {scope === "all" && <td><div className="row-main" style={{ cursor:"default", fontSize:13, color: (s.false_done ?? 0) > 0 ? "#dc2626" : "#9ca3af", fontWeight:600 }}>{s.false_done ?? 0}</div></td>}
                   <td><div className="row-main" style={{ cursor:"default", fontSize:12, color:"#6b7280" }}>{s.reply_rate_pct != null ? `${s.reply_rate_pct}%` : "—"}</div></td>
                   <td><div className="row-main" style={{ cursor:"default", fontSize:12, color:"#6b7280" }}>{s.avg_response_hours != null ? `${s.avg_response_hours}h` : "—"}</div></td>
                   <td><div className="row-main" style={{ cursor:"default", fontSize:12, color:"#7c3aed", fontWeight:600 }}>{s.resolved_count}</div></td>

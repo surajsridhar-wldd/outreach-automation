@@ -64,7 +64,7 @@ test('the owner\'s decisions always win: exclude removes a case for good, nudge 
   ];
   const none = classifyZeroCost(rows, campaigns, clients);
   assert.deepEqual([none.issues.length, none.review.length, none.excluded.length], [1, 1, 1]);
-  const decided = classifyZeroCost(rows, campaigns, clients, new Map([[`a|${svc}`, 'exclude'], [`e|${svc}`, 'exclude'], [`i|${svc}`, 'nudge']]));
+  const decided = classifyZeroCost(rows, campaigns, clients, new Map([[`a|${svc}`, { decision: 'exclude', note: 'Das did it' }], [`e|${svc}`, { decision: 'exclude', note: 'AI videos' }], [`i|${svc}`, { decision: 'nudge', note: 'made by internal team' }]]));
   assert.deepEqual(decided.issues.map((x) => x.campaign.campaign_id), ['i']);
   assert.deepEqual(decided.review, []);
   assert.deepEqual(decided.excluded.map((x) => [x.campaign.campaign_id, x.why]), [['a', 'owner decision'], ['e', 'owner decision']]);

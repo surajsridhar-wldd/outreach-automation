@@ -57,7 +57,7 @@ test('holds follow the promised date but are capped per category', () => {
 
 test('loop-in adds a co-owner; owner redirect reassigns; unmatched or ambiguous goes to review', () => {
   const co = effectsFor({ item_no: 1, intent: 'loop_in', target_person: 'Ravi Kumar', evidence: 'add Ravi', confidence: 0.9 }, ctx());
-  assert.deepEqual(co.effects, [{ type: 'owner', issueId: 'i1', dmsUserId: 'u9', role: 'co_owner', replaces: null, leadAtCreation: 'u1' }]);
+  assert.deepEqual(co.effects, [{ type: 'owner', issueId: 'i1', dmsUserId: 'u9', role: 'co_owner', replaces: null, leadAtCreation: 'u1', createPerson: null }]);
   const re = effectsFor({ item_no: 1, intent: 'redirect', target_person: 'Ravi Kumar', evidence: 'Ravi handles this', confidence: 0.9 }, ctx());
   assert.equal(re.effects[0].role, 'reassigned_to'); assert.equal(re.effects[0].replaces, 'u1');
   const third = effectsFor({ item_no: 1, intent: 'redirect', target_person: 'Ravi Kumar', evidence: 'x', confidence: 0.9 }, ctx({ fromOwner: false, senderId: 'm1' }));
@@ -197,4 +197,15 @@ test('executor skips unreachable people and counts a "done" claim Mongo did not 
   const r = await executePlan({ plan, mode: 'live', now: new Date('2026-09-21T06:30:00Z'), runId: 'r', store, senders: { email: async () => { calls.sent++; return { threadId: 'T', rfcMessageId: '<m>', gmailMessageId: 'g' }; } }, issuesById, people, settings: { senderName: 'S' } });
   assert.equal(calls.sent, 1); assert.equal(r.skippedUnreachable, 1);
   assert.deepEqual(calls.fd, ['i1']); assert.equal(calls.review[0].kind, 'false_done_twice');
+});
+
+test('loop-in with a company address we have not seen creates that person; outside addresses never do', () => {
+  const r = makePersonResolver([{ dms_user_id: 'a', name: 'Ravi Kumar', email: 'ravi@wldd.in' }]);
+  const u = r('Urvashi Chauhan <urvashichauhan@wldd.in>');
+  assert.equal(u.id, 'contact:urvashichauhan@wldd.in');
+  assert.deepEqual(u.create, { dms_user_id: 'contact:urvashichauhan@wldd.in', name: 'Urvashi Chauhan', email: 'urvashichauhan@wldd.in', is_deleted: false });
+  assert.equal(r('someone@gmail.com'), null);
+  assert.deepEqual(r('ravi@wldd.in'), { id: 'a' });
+  const e = effectsFor({ item_no: 1, intent: 'loop_in', target_person: 'Urvashi Chauhan <urvashichauhan@wldd.in>', evidence: 'looping in', confidence: 0.95 }, ctx({ resolvePerson: r }));
+  assert.equal(e.effects[0].role, 'co_owner'); assert.equal(e.effects[0].createPerson.email, 'urvashichauhan@wldd.in'); assert.deepEqual(e.review, []);
 });

@@ -36,6 +36,11 @@ export async function loadHolidays(db) {
 }
 
 export const loadOpenIssues = (db) => fetchAll(() => db.from('issues').select('*').eq('state', 'open'), 'load open issues');
+export const loadIssuesByIds = async (db, ids) => {
+  const out = [];
+  for (let i = 0; i < ids.length; i += 100) out.push(...ok(await db.from('issues').select('*').in('id', ids.slice(i, i + 100)).in('state', ['draft', 'open']), 'load issues'));
+  return out;
+};
 export const loadOverrides = (db) => fetchAll(() => db.from('issue_owners').select('*').eq('active', true), 'load owner overrides');
 export const loadPeople = (db) => fetchAll(() => db.from('dms_people').select('*'), 'load people');
 
@@ -85,10 +90,10 @@ export async function addReviewItem(db, { kind, issue_id = null, note, message_i
   ok(await db.from('review_items').insert({ kind, issue_id, note, message_in_id, payload }), 'add review item');
 }
 
-/** The owner's permanent zero-cost decisions: Map "campaign_id|service_id" -> 'exclude' | 'nudge'. */
+/** The owner's permanent zero-cost decisions: Map "campaign_id|service_id" -> { decision: 'exclude' | 'nudge', note: DMS note at that time }. */
 export async function loadZeroCostDecisions(db) {
-  const rows = ok(await db.from('zero_cost_decisions').select('campaign_id,service_id,decision'), 'load zero-cost decisions');
-  return new Map(rows.map((r) => [`${r.campaign_id}|${r.service_id}`, r.decision]));
+  const rows = ok(await db.from('zero_cost_decisions').select('campaign_id,service_id,decision,note_at_decision'), 'load zero-cost decisions');
+  return new Map(rows.map((r) => [`${r.campaign_id}|${r.service_id}`, { decision: r.decision, note: r.note_at_decision }]));
 }
 
 /**
@@ -96,12 +101,14 @@ export async function loadZeroCostDecisions(db) {
  * (open OR already marked done) it is not raised again, so "Mark done" never makes it come back.
  */
 export async function addManualVerifyOnce(db, z) {
-  const key = `${z.campaign_id}|${z.service_id}`;
+  const key = z.key || `${z.campaign_id}|${z.service_id}`;
   const prev = ok(await db.from('review_items').select('id').eq('kind', 'low_confidence').eq('payload->>key', key).limit(1), 'check manual-verify item');
   if (prev.length) return false;
   ok(await db.from('review_items').insert({
     kind: 'low_confidence', payload: { key, type: 'zero_cost', campaign_id: z.campaign_id, service_id: z.service_id, campaign_name: z.campaign_name, service: z.service, note: z.note },
-    note: `Zero-cost service needs a check (AI or Chiraiya, no clear "done by our team"): ${z.campaign_name}, ${z.service}. Note: ${z.note || '(none)'}`,
+    note: z.reason === 'note changed'
+      ? `Zero-cost service: the DMS note changed since you excluded it, so please check again: ${z.campaign_name}, ${z.service}. New note: ${z.note || '(none)'}`
+      : `Zero-cost service needs a check (AI or Chiraiya, no clear "done by our team"): ${z.campaign_name}, ${z.service}. Note: ${z.note || '(none)'}`,
   }), 'add manual-verify item');
   return true;
 }
@@ -137,7 +144,8 @@ export function executorStore(db) {
     },
     async applySent({ issues, recipientIds, deferredIds, nowIso }) {
       for (const i of issues) {
-        ok(await db.from('issues').update({ nudge_count: i.nudgeCount + 1, last_nudged_at: nowIso }).eq('id', i.id), 'mark issue nudged');
+        // A draft (imported by hand, never sent) becomes an open issue with its first send.
+        ok(await db.from('issues').update({ nudge_count: i.nudgeCount + 1, last_nudged_at: nowIso, state: 'open' }).eq('id', i.id).in('state', ['draft', 'open']), 'mark issue nudged');
       }
       if (recipientIds.length) {
         ok(await db.from('dms_people').update({ entered_at: nowIso }).in('dms_user_id', recipientIds).is('entered_at', null), 'mark people entered');
@@ -173,9 +181,9 @@ export async function recoverStale(db, olderThanMinutes = 30) {
 const daysAgoIso = (now, n) => new Date(now.getTime() - n * 86_400_000).toISOString();
 
 /** Reminder emails from the last 30 days whose thread we read for replies, with the items each carried. */
-async function replyThreads(db, now) {
+async function replyThreads(db, now, windowDays = 30) {
   const outs = await fetchAll(() => db.from('messages_out').select('id,recipient_dms_user_id,gmail_thread_id,sent_at')
-    .eq('channel', 'email').eq('status', 'sent').in('mode', ['live', 'canary']).not('gmail_thread_id', 'is', null).gte('sent_at', daysAgoIso(now, 30)).order('sent_at'), 'load sent reminders');
+    .eq('channel', 'email').eq('status', 'sent').in('mode', ['live', 'canary']).not('gmail_thread_id', 'is', null).gte('sent_at', daysAgoIso(now, windowDays)).order('sent_at'), 'load sent reminders');
   const itemRows = outs.length ? await fetchAll(() => db.from('message_items').select('message_out_id,issue_id,item_no').in('message_out_id', outs.map((o) => o.id)), 'load reminder items') : [];
   const itemsByOut = new Map();
   for (const r of itemRows) itemsByOut.set(r.message_out_id, [...(itemsByOut.get(r.message_out_id) || []), r]);
@@ -208,9 +216,9 @@ async function slackConversations(db, now) {
   return [...byChannel.values()];
 }
 
-export function replyStore(db) {
+export function replyStore(db, { windowDays = 30 } = {}) {
   return {
-    replyThreads: (now) => replyThreads(db, now),
+    replyThreads: (now) => replyThreads(db, now, windowDays),
     slackConversations: (now) => slackConversations(db, now),
     async getMessageIn(channel, externalId) {
       const rows = ok(await db.from('messages_in').select('id,clean_text,from_owner,processed_at').eq('channel', channel).eq('external_id', externalId).limit(1), 'load message_in');
@@ -235,6 +243,7 @@ export function replyStore(db) {
         const until = cur.hold_until && cur.hold_until > e.until ? cur.hold_until : e.until;
         ok(await db.from('issues').update({ hold_until: until, hold_reason: e.reason, hold_renewals: (cur.hold_renewals || 0) + 1 }).eq('id', e.issueId).eq('state', 'open'), 'set hold');
       } else if (e.type === 'owner') {
+        if (e.createPerson) ok(await db.from('dms_people').upsert(e.createPerson, { onConflict: 'dms_user_id', ignoreDuplicates: true }), 'add person');
         const dup = ok(await db.from('issue_owners').select('id').eq('issue_id', e.issueId).eq('dms_user_id', e.dmsUserId).eq('active', true).limit(1), 'check owner');
         if (!dup.length) ok(await db.from('issue_owners').insert({ issue_id: e.issueId, dms_user_id: e.dmsUserId, role: e.role, replaces_dms_user_id: e.replaces, lead_at_creation: e.leadAtCreation, source_message_in_id: messageInId }), 'add owner');
       }

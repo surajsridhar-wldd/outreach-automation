@@ -16,8 +16,14 @@ export function makePersonResolver(people) {
   return (text) => {
     const t = String(text || '').trim().toLowerCase();
     if (!t) return null;
-    const byEmail = active.filter((p) => p.email.toLowerCase() === addressOf(t));
+    const typed = addressOf(t);
+    const byEmail = active.filter((p) => p.email.toLowerCase() === typed);
     if (byEmail.length === 1) return { id: byEmail[0].dms_user_id };
+    // A company address the replier typed themselves is authoritative even if we have never messaged that person.
+    if (!byEmail.length && /^[^@\s]+@wldd\.in$/.test(typed) && !people.some((p) => (p.email || '').toLowerCase() === typed)) {
+      const display = String(text || '').replace(/<[^>]*>/g, '').replace(/[@"]/g, '').trim();
+      return { id: `contact:${typed}`, create: { dms_user_id: `contact:${typed}`, name: display && !/@/.test(display) ? display : typed.split('@')[0], email: typed, is_deleted: false } };
+    }
     const exact = active.filter((p) => (p.name || '').trim().toLowerCase() === t);
     if (exact.length === 1) return { id: exact[0].dms_user_id };
     if (exact.length > 1) return { ambiguous: true };

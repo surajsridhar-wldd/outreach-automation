@@ -20,6 +20,10 @@ export const CATEGORY = {
   CLOSING: 'pending_closings',
   PROPOSAL: 'pending_proposals',
   ZERO_COST: 'zero_cost_services',
+  // Categories the owner adds by hand. Any other tag works too: unknown categories are tier 2, Mon/Wed/Fri.
+  REVENUE_MISMATCH: 'revenue_mismatch',
+  WRONG_MARGINS: 'wrong_margins',
+  MISSING_DMS_ENTRY: 'missing_dms_entry',
 };
 
 /** Lower tier = more urgent. */
@@ -31,6 +35,9 @@ export const TIER = {
   [CATEGORY.PROPOSAL]: 3,
   [CATEGORY.ZERO_COST]: 3,
 };
+
+/** Urgency tier of any category (lower = more urgent). Unknown / user-defined categories are tier 2. */
+export const tierOf = (category) => TIER[category] ?? 2;
 
 export const WEEKLY_CATEGORIES = new Set([CATEGORY.CLOSING, CATEGORY.PROPOSAL, CATEGORY.ZERO_COST]);
 
@@ -135,7 +142,7 @@ export function planRun({ now, issues, people = {}, holidays = new Set(), settin
   }
 
   const buildMessage = (recipientId, items, lane) => {
-    const sorted = [...items].sort((a, b) => TIER[a.category] - TIER[b.category] || a.issueId.localeCompare(b.issueId));
+    const sorted = [...items].sort((a, b) => tierOf(a.category) - tierOf(b.category) || a.issueId.localeCompare(b.issueId));
     return {
       recipientId,
       lane,
@@ -157,7 +164,7 @@ export function planRun({ now, issues, people = {}, holidays = new Set(), settin
   // longest-waiting item, then id for a fully deterministic order.
   const rankA = ({ rid, items, person }) => [
     (person.skippedCount || 0) >= settings.promoteAfterSkips ? 0 : 1,
-    Math.min(...items.map((i) => TIER[i.category])),
+    Math.min(...items.map((i) => tierOf(i.category))),
     items.map((i) => i.firstSeenAt || '').sort()[0],
     rid,
   ];

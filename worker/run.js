@@ -78,7 +78,8 @@ export async function main(env = process.env) {
     const { issues: fetched, orphans, manualVerify, zeroExcluded } = await fetchOpenIssues(mongo.db('test'), realNow, { log: console.log, zeroDecisions });
     let zeroRaised = 0;
     for (const z of manualVerify || []) if (await S.addManualVerifyOnce(db, z)) zeroRaised++;
-    const existingOpen = await S.loadOpenIssues(db);
+    // Only Mongo-detected issues are mirrored from / cleared by Mongo. Issues added by hand are resolved by a person.
+    const existingOpen = (await S.loadOpenIssues(db)).filter((i) => i.source !== 'manual');
     const diff = diffIssues(existingOpen, fetched);
     // Reporting lines: the company team sheet is the most up-to-date source; DMS cohort/pod leads are the
     // fallback. A failure to read the sheet never stops a run.
@@ -108,7 +109,8 @@ export async function main(env = process.env) {
 
     // Categories can be switched on one at a time (e.g. invoice approvals first). Unset = all five.
     const enabled = Array.isArray(settings.enabled_categories) ? new Set(settings.enabled_categories) : null;
-    const plannerIssues = openRows.filter((r) => !suspect.has(r.category) && (!enabled || enabled.has(r.category))).map((r) => {
+    // Manual issues follow their own switch (auto_followups) and are never touched by the category switch or the Mongo guard.
+    const plannerIssues = openRows.filter((r) => r.source === 'manual' ? r.auto_followups !== false : (!suspect.has(r.category) && (!enabled || enabled.has(r.category)))).map((r) => {
       const { ownerIds, needsOwner } = resolveRecipients(r, overridesByIssue.get(r.id) || []);
       return { id: r.id, category: r.category, ownerIds, needsOwner, nudgeCount: r.nudge_count, lastNudgedAt: r.last_nudged_at, holdUntil: r.hold_until, firstSeenAt: r.first_seen_at };
     });

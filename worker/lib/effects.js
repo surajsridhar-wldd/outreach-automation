@@ -66,7 +66,7 @@ export function effectsFor(interp, ctx) {
       const role = interp.intent === 'redirect' && ctx.fromOwner ? 'reassigned_to' : 'co_owner';
       for (const t of targets) {
         if (who.id === t.ownerId) continue;
-        out.effects.push({ type: 'owner', issueId: t.issueId, dmsUserId: who.id, role, replaces: role === 'reassigned_to' ? ctx.senderId : null, leadAtCreation: t.ownerId });
+        out.effects.push({ type: 'owner', issueId: t.issueId, dmsUserId: who.id, role, replaces: role === 'reassigned_to' ? ctx.senderId : null, leadAtCreation: t.ownerId, createPerson: who.create || null });
       }
       break;
     }

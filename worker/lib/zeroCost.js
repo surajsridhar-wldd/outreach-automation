@@ -15,6 +15,8 @@ const EXCLUDE = [
   new RegExp(`\\b${DID}\\s+(?:internally|in-?house)\\b`, 'i'),
   new RegExp(`\\b(?:internal|in-?house|our)\\b[^.\\n]{0,40}?\\bteam\\b[^.\\n]{0,30}?\\b(?:${DID}|did)\\b`, 'i'),
 ];
+// Notes are compared on their first 180 characters, so a stored (truncated) copy still matches the live note.
+const normNote = (n) => String(n || '').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 180);
 const AI = /\bai\b|artificial intelligence|ai-generated|gen ?ai/i;
 
 /**
@@ -54,7 +56,8 @@ export function zeroCostPipeline() {
 
 /**
  * Rows -> { issues, review, excluded } after the status/client filters, the note rules and the owner's own decisions.
- * decisions: Map "campaign_id|service_id" -> 'exclude' | 'nudge'  (the owner's decision always wins over the note rules)
+ * decisions: Map "campaign_id|service_id" -> { decision: 'exclude'|'nudge', note }  (the owner's decision wins over the note rules,
+ *   except that an EXCLUDED case whose DMS note has changed since goes back to review, never straight to a nudge)
  * No model is involved anywhere here: every sync re-evaluates the rows from scratch with these fixed rules, at no cost.
  */
 export function classifyZeroCost(rows, campaignById, clientNameById, decisions = new Map()) {
@@ -68,9 +71,14 @@ export function classifyZeroCost(rows, campaignById, clientNameById, decisions =
     const note = (r.notes || []).filter(Boolean).join(' | ');
     const service = ZERO_COST_SERVICES[r.service_id];
     const row = { campaign, service, service_id: r.service_id, note };
-    const decision = decisions.get(`${r.campaign_id}|${r.service_id}`);
-    if (decision === 'exclude') { excluded.push({ ...row, why: 'owner decision' }); continue; }
-    if (decision === 'nudge') { issues.push(row); continue; }
+    const d = decisions.get(`${r.campaign_id}|${r.service_id}`);
+    if (d?.decision === 'exclude') {
+      if (d.note != null && normNote(d.note) !== normNote(note)) {
+        review.push({ ...row, reason: 'note changed', key: `${r.campaign_id}|${r.service_id}|${normNote(note).slice(0, 80)}` });
+      } else excluded.push({ ...row, why: 'owner decision' });
+      continue;
+    }
+    if (d?.decision === 'nudge') { issues.push(row); continue; }
     const verdict = classifyNote(note, campaign.name);
     if (verdict === 'exclude') { excluded.push({ ...row, why: 'note says the internal team did it' }); continue; }
     if (verdict === 'manual') { review.push(row); continue; }

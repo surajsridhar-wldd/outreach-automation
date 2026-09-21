@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import Automation from "../nudges/page";
 
 const LABEL = {
   pending:"Pending",sent:"Sent",active:"Active",
@@ -52,6 +53,7 @@ export default function Admin() {
         <button className={`tab-btn ${tab === "team" ? "active" : ""}`} onClick={() => setTab("team")}>
           Team <span className="tab-count">{users.length}</span>
         </button>
+        <button className={`tab-btn ${tab === "automation" ? "active" : ""}`} onClick={() => setTab("automation")}>Automation</button>
       </div>
 
       {tab === "cases" && (
@@ -78,6 +80,8 @@ export default function Admin() {
           </div>
         </>
       )}
+
+      {tab === "automation" && <Automation />}
 
       {tab === "team" && (
         <div className="tbl-wrap">

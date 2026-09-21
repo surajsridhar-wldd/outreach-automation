@@ -75,8 +75,10 @@ export async function POST(req) {
     // From the list of current zero-cost cases: campaign_id here is "campaign|service" as stored on the issue.
     const [campaign_id, service_id] = body.campaign_id.split("|");
     if (!campaign_id || !service_id) return Response.json({ error: "Bad id" }, { status: 400 });
+    const { data: cur } = await db.from("issues").select("detail").eq("campaign_id", body.campaign_id).eq("state", "open").limit(1);
     const { error } = await db.from("zero_cost_decisions").upsert({
       campaign_id, service_id, campaign_name: body.campaign_name || null, service: body.service || null, decision: "exclude", decided_by: a.user.email, decided_at: new Date().toISOString(),
+      note_at_decision: cur?.[0]?.detail?.internal_note ?? "",
     }, { onConflict: "campaign_id,service_id" });
     if (error) return Response.json({ error: error.message }, { status: 500 });
     return Response.json({ ok: true });

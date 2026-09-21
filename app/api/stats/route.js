@@ -1,5 +1,6 @@
 import { requireUser, unauthorized } from "@/lib/session";
 import { db } from "@/lib/supabase";
+import { labelOf } from "@/lib/ledger.mjs";
 
 export async function GET(req) {
   const user = await requireUser();
@@ -62,6 +63,23 @@ export async function GET(req) {
     userMap = Object.fromEntries((users || []).map(u => [u.id, u.name]));
   }
 
+  // Unified numbers: everything the automation and "send now" have sent, and how each person's issues stand in the ledger.
+  let ledgerCategories = [];
+  const ledgerByEmail = {};
+  if (scope === "all" && user.role === "admin") {
+    const [{ data: sent }, { data: iss }, { data: ppl }, { data: cats }] = await Promise.all([
+      db.from("messages_out").select("recipient_dms_user_id").eq("channel", "email").eq("status", "sent").eq("mode", "live").neq("subject", "[legacy manual outreach]"),
+      db.from("issues").select("owner_dms_user_id,state,nudge_count,false_done_claims,hold_renewals"),
+      db.from("dms_people").select("dms_user_id,name,email"),
+      db.from("nudge_category_stats").select("*"),
+    ]);
+    ledgerCategories = (cats || []).map((c) => ({ ...c, label: labelOf(c.category) }));
+    const byId = Object.fromEntries((ppl || []).map((p) => [p.dms_user_id, p]));
+    const slot = (id) => { const p = byId[id]; if (!p?.email) return null; return (ledgerByEmail[p.email.toLowerCase()] ||= { name: p.name, email: p.email, auto_nudges: 0, open_now: 0, false_done: 0, holds: 0 }); };
+    for (const m of sent || []) { const l = slot(m.recipient_dms_user_id); if (l) l.auto_nudges++; }
+    for (const i of iss || []) { const l = slot(i.owner_dms_user_id); if (!l) continue; if (i.state !== "cleared") l.open_now++; l.false_done += i.false_done_claims || 0; l.holds += i.hold_renewals || 0; }
+  }
+
   const stats = Object.values(pocMap).map(p => ({
     poc_email: p.poc_email,
     poc_name: p.poc_name,
@@ -78,15 +96,23 @@ export async function GET(req) {
     last_contacted: p.last_contacted,
     resolved_count: p.statuses.filter(s => s === "resolved").length,
     escalated_count: p.statuses.filter(s => s === "escalated").length,
-  })).sort((a, b) => b.total_outreaches - a.total_outreaches);
+    ...(ledgerByEmail[(p.poc_email || "").toLowerCase()] ? (({ auto_nudges, open_now, false_done, holds }) => ({ auto_nudges, open_now, false_done, holds }))(ledgerByEmail[(p.poc_email || "").toLowerCase()]) : { auto_nudges: 0, open_now: 0, false_done: 0, holds: 0 }),
+  }));
+  // People who only exist in the ledger (never chased through the old tracker) still get a row.
+  const known = new Set(stats.map((x) => (x.poc_email || "").toLowerCase()));
+  for (const l of Object.values(ledgerByEmail)) {
+    if (known.has(l.email.toLowerCase()) || (!l.auto_nudges && !l.open_now)) continue;
+    stats.push({ poc_email: l.email, poc_name: l.name, user_id: null, user_name: null, distinct_campaigns: 0, campaigns_list: "", total_outreaches: 0, total_followups: 0, reply_rate_pct: null, avg_response_hours: null, last_contacted: null, resolved_count: 0, escalated_count: 0, auto_nudges: l.auto_nudges, open_now: l.open_now, false_done: l.false_done, holds: l.holds });
+  }
+  stats.sort((a, b) => (b.total_outreaches + b.auto_nudges) - (a.total_outreaches + a.auto_nudges));
 
   // XLSX export
   if (format === "xlsx") {
     const rows = [
-      ["POC Name", "Email", "Campaigns", "Total Outreaches", "Total Follow-ups", "Reply Rate %", "Avg Response (hrs)", "Resolved", "Escalated", "Last Contacted"],
+      ["POC Name", "Email", "Campaigns", "Total Outreaches", "Total Follow-ups", "Automated/Send-now Nudges", "Open Now", "False Done Claims", "Reply Rate %", "Avg Response (hrs)", "Resolved", "Escalated", "Last Contacted"],
       ...stats.map(s => [
         s.poc_name, s.poc_email, s.campaigns_list,
-        s.total_outreaches, s.total_followups,
+        s.total_outreaches, s.total_followups, s.auto_nudges, s.open_now, s.false_done,
         s.reply_rate_pct, s.avg_response_hours ?? "",
         s.resolved_count, s.escalated_count,
         s.last_contacted ? new Date(s.last_contacted).toLocaleDateString() : "",
@@ -131,5 +157,5 @@ export async function GET(req) {
       : null,
   })).sort((a, b) => b.total - a.total);
 
-  return Response.json({ stats, userMap, byCategory });
+  return Response.json({ stats, userMap, byCategory, ledgerCategories });
 }
