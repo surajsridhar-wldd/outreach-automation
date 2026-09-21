@@ -45,6 +45,7 @@ if (!apply) { console.log('DRY RUN: nothing sent. Set APPLY=yes to send.'); proc
 
 // Batches never split a person (everyone gets ONE email covering all their items) and stay small: each email takes a few
 // seconds on the website's server, which has a 30-second limit per request.
+const sender = makeAppSender({ baseUrl: settings.app_base_url, key: process.env.SUPABASE_SERVICE_ROLE_KEY });
 const batches = []; let cur = []; let curPeople = 0;
 for (const [, list] of byPerson) {
   if (curPeople >= 3 || (cur.length && cur.length + list.length > 25)) { batches.push(cur); cur = []; curPeople = 0; }
