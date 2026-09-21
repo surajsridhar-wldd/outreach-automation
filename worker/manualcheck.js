@@ -35,10 +35,15 @@ try {
   const items1 = ok(await db.from('message_items').select('*').eq('issue_id', issueId), 'items');
   check('message is linked to the issue with its item number', items1.length === 1 && items1[0].item_no === 1);
 
+  const it1 = ok(await db.from('issue_items').select('*').eq('issue_id', issueId), 'items after first send');
+  check('the hand-added issue got its single tracked item, at nudge 1', it1.length === 1 && it1[0].item_key === 'main' && it1[0].nudge_count === 1, JSON.stringify(it1.map((x) => [x.item_key, x.nudge_count])));
+
   const r2 = await sender.sendIssues([issueId]);        // a second manual send the same day
   check('second manual send the same day is NOT blocked', r2.sent === 1, JSON.stringify(r2));
   iss = ok(await db.from('issues').select('*').eq('id', issueId).single(), 'reload 2');
   check('nudge count is now 2', iss.nudge_count === 2, String(iss.nudge_count));
+  const it2 = ok(await db.from('issue_items').select('*').eq('issue_id', issueId), 'items after second send');
+  check('the item count followed (2)', it2[0]?.nudge_count === 2, String(it2[0]?.nudge_count));
   const outs2 = ok(await db.from('messages_out').select('*').eq('recipient_dms_user_id', pid).eq('mode', 'live').eq('channel', 'email').gte('created_at', new Date(Date.now() - 10 * 60_000).toISOString()).order('created_at'), 'messages 2');
   check('the follow-up stayed in the same email thread', outs2.length >= 2 && outs2.at(-1).gmail_thread_id === outs2[0].gmail_thread_id, `${outs2.length} emails`);
 
