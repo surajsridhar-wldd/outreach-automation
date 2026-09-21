@@ -55,7 +55,7 @@ input:focus,textarea:focus,select:focus { border-color:var(--blue); box-shadow:0
 .tab-count { background:var(--line); color:var(--dim); font-size:10px; font-weight:700; padding:1px 6px; border-radius:99px; }
 .tab-btn.active .tab-count { background:var(--blue); color:#fff; }
 
-.tbl-wrap { border-radius:10px; border:1px solid var(--line); overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch; background:#fff; }
+.tbl-wrap { border-radius:10px; border:1px solid var(--line); overflow-x:auto; overflow-y:visible; overscroll-behavior-y:auto; background:#fff; }
 .tbl-wrap table { min-width:760px; }
 .tbl-wrap::-webkit-scrollbar { height:8px; }
 .tbl-wrap::-webkit-scrollbar-thumb { background:#cbd5e1; border-radius:4px; }
