@@ -1,177 +1,111 @@
 "use client";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
+import Link from "next/link";
+import { CategoryChip } from "@/components/shared";
 
-export default function StatsPage() {
-  const [stats, setStats] = useState([]);
-  const [byCategory, setByCategory] = useState([]);
-  const [ledgerCats, setLedgerCats] = useState([]);
-  const [me, setMe] = useState(null);
-  const [scope, setScope] = useState("mine");
-  const [downloading, setDownloading] = useState(false);
+// Frequency: one view of how often people are chased and how well it works, across everything in the tracker
+// (issues the DMS check finds and the ones you add by hand, automatic and manual nudges together).
 
-  useEffect(() => { fetch("/api/me").then(r => r.json()).then(setMe); }, []);
+const when = (t) => (t ? new Date(t).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short" }) : "—");
+const num = (v, suffix = "") => (v == null ? "—" : `${v}${suffix}`);
 
-  const load = useCallback(() => {
-    fetch(`/api/stats?scope=${scope}`).then(r => r.json()).then(d => { setStats(d.stats || []); setByCategory(d.byCategory || []); setLedgerCats(d.ledgerCategories || []); });
-  }, [scope]);
+const COLS = [
+  ["name", "POC"], ["open", "OPEN"], ["nudges", "NUDGES SENT"], ["openAfter3", "STILL OPEN AFTER 3"], ["falseDone", "FALSE “DONE”"],
+  ["replyRate", "REPLY RATE"], ["avgResponseHours", "AVG RESPONSE"], ["avgDaysToClear", "AVG DAYS TO CLEAR"], ["resolved", "RESOLVED"], ["holds", "SNOOZES"], ["reassignedAway", "HANDED OVER"], ["lastContacted", "LAST NUDGE"],
+];
 
-  useEffect(() => { load(); }, [load]);
+export default function Frequency() {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState(null);
+  const [q, setQ] = useState("");
+  const [sort, setSort] = useState({ key: null, dir: -1 });
+  const [showWeekly, setShowWeekly] = useState(false);
 
-  // Re-fetch whenever the tab regains focus or becomes visible again —
-  // covers the case where outreach was sent elsewhere and you switch back here.
-  useEffect(() => {
-    function onFocus() { load(); }
-    function onVisible() { if (document.visibilityState === "visible") load(); }
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [load]);
+  const load = useCallback(async () => {
+    const r = await fetch("/api/frequency"); const j = await r.json();
+    if (!r.ok) return setErr(j.error || "Could not load");
+    setErr(null); setD(j);
+  }, []);
+  useEffect(() => { load(); const f = () => document.visibilityState === "visible" && load(); document.addEventListener("visibilitychange", f); return () => document.removeEventListener("visibilitychange", f); }, [load]);
 
-  async function download() {
-    setDownloading(true);
-    const res = await fetch(`/api/stats?scope=${scope}&format=xlsx`);
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `frequency-tracker-${new Date().toISOString().slice(0,10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    setDownloading(false);
+  const people = useMemo(() => {
+    if (!d) return [];
+    const ql = q.trim().toLowerCase();
+    const list = d.byPerson.filter((p) => !ql || [p.name, p.email, p.manager].some((x) => (x || "").toLowerCase().includes(ql)));
+    if (!sort.key) return list;
+    return [...list].sort((a, b) => { const x = a[sort.key], y = b[sort.key]; if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1; return (typeof x === "string" ? x.localeCompare(y) : x - y) * sort.dir; });
+  }, [d, q, sort]);
+
+  function exportCsv() {
+    const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const rows = [["POC", "Email", "Manager", ...COLS.slice(1).map((c) => c[1])].map(esc).join(",")];
+    for (const p of people) rows.push([p.name, p.email, p.manager, ...COLS.slice(1).map(([k]) => (k === "lastContacted" ? (p[k] ? p[k].slice(0, 10) : "") : p[k]))].map(esc).join(","));
+    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([rows.join("\n")], { type: "text/csv" })); a.download = `frequency-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
   }
+
+  if (err) return <div><div className="page-header"><h1>Frequency</h1><p>{err}</p></div><p style={{ fontSize: 13 }}>This view is for admins. <Link href="/tracker-legacy">Open the old tracker</Link>.</p></div>;
+  if (!d) return <div className="empty"><h3>Loading…</h3></div>;
+  const c = d.cards;
+  const cards = [
+    ["Open issues", c.open, `${c.nudgedOpen} nudged · ${c.notYetNudged} yet to nudge`, "#2563eb"],
+    ["Nudges sent, last 7 days", c.nudgesLast7, "emails and DMs", "#d97706"],
+    ["Resolved, last 30 days", c.resolvedLast30, `avg ${num(c.avgDaysToClear, " days")} to clear`, "#7c3aed"],
+    ["Said “done”, still pending", c.falseDone, "times, across everyone", c.falseDone ? "#dc2626" : "#9ca3af"],
+  ];
 
   return (
     <div>
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4 }}>
-        <h1 style={{ fontSize:20, fontWeight:700, letterSpacing:"-.4px" }}>Frequency Tracker</h1>
-        <div style={{ display:"flex", gap:8 }}>
-          <button className="btn btn-sm" onClick={load}>↻ Refresh</button>
-          <button className="btn btn-green btn-sm" disabled={downloading || !stats.length} onClick={download}>
-            {downloading ? "Downloading…" : "⬇ Download CSV"}
-          </button>
-        </div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6, flexWrap: "wrap", gap: 8 }}>
+        <h1 style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-.4px" }}>Frequency</h1>
+        <div style={{ display: "flex", gap: 8 }}><button className="btn btn-sm" onClick={load}>↻ Refresh</button><button className="btn btn-green btn-sm" onClick={exportCsv}>⬇ Download CSV</button></div>
       </div>
-      <p style={{ fontSize:13, color:"#6b7280", marginBottom:20 }}>
-        One row per POC across all campaigns: your manual outreach plus the automated nudges. In the global view you also see how many of their issues are open now and how often they said “done” while DMS still showed it pending.
-      </p>
+      <p style={{ fontSize: 13, color: "#6b7280", marginBottom: 20 }}>How often people are chased and how well it works, for everything in the Tracker: issues the DMS check finds and the ones you add by hand, automatic and manual nudges together. The people with the most still open after 3 nudges come first.</p>
 
-      {me?.role === "admin" && (
-        <div className="tabs" style={{ marginBottom:20 }}>
-          <button className={`tab-btn ${scope==="mine"?"active":""}`} onClick={() => setScope("mine")}>My outreach</button>
-          <button className={`tab-btn ${scope==="all"?"active":""}`} onClick={() => setScope("all")}>★ Global (all users)</button>
-        </div>
-      )}
+      <div className="stat-grid" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))" }}>
+        {cards.map(([label, n, sub, col]) => <div key={label} className="stat-card" style={{ cursor: "default" }}><div className="stat-num" style={{ color: col }}>{n}</div><div className="stat-label">{label}</div><div style={{ fontSize: 11, color: "#9ca3af", marginTop: 4 }}>{sub}</div></div>)}
+      </div>
 
-      {byCategory.length > 0 && (
-        <div style={{ marginBottom:28 }}>
-          <h2 style={{ fontSize:15, fontWeight:700, marginBottom:4 }}>By Category</h2>
-          <p style={{ fontSize:12, color:"#6b7280", marginBottom:12 }}>Which problem types get ignored most. Reply rate and resolution by category.</p>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(220px, 1fr))", gap:12 }}>
-            {byCategory.map(c => (
-              <div key={c.category} style={{ border:"1px solid #e5e7eb", borderRadius:10, padding:14, background:"#fff" }}>
-                <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:10 }}>
-                  <code style={{ background:"#f3f4f6", padding:"2px 6px", borderRadius:4, fontSize:11, fontWeight:600 }}>{c.category}</code>
-                </div>
-                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
-                  <span style={{ fontSize:12, color:"#6b7280" }}>Open / Total</span>
-                  <span style={{ fontSize:13, fontWeight:600 }}>{c.open} / {c.total}</span>
-                </div>
-                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
-                  <span style={{ fontSize:12, color:"#6b7280" }}>Reply rate</span>
-                  <span style={{ fontSize:13, fontWeight:600, color: c.reply_rate_pct < 40 ? "#dc2626" : c.reply_rate_pct < 70 ? "#d97706" : "#059669" }}>{c.reply_rate_pct}%</span>
-                </div>
-                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
-                  <span style={{ fontSize:12, color:"#6b7280" }}>Resolved</span>
-                  <span style={{ fontSize:13, fontWeight:600, color:"#7c3aed" }}>{c.resolved}</span>
-                </div>
-                <div style={{ display:"flex", justifyContent:"space-between" }}>
-                  <span style={{ fontSize:12, color:"#6b7280" }}>Avg response</span>
-                  <span style={{ fontSize:13, fontWeight:600, color:"#6b7280" }}>{c.avg_response_hours != null ? `${c.avg_response_hours}h` : "—"}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <h2 style={{ fontSize: 15, fontWeight: 700, margin: "6px 0 4px" }}>By category</h2>
+      <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 10 }}>Which problem types take longest to clear and how many nudges it takes.</p>
+      <div style={{ marginBottom: 28 }}><p className="scroll-hint">← swipe the table sideways →</p><div className="tbl-wrap"><table>
+        <thead><tr><th>CATEGORY</th><th>OPEN</th><th>CLEARED</th><th>NUDGES SENT</th><th>AVG NUDGES TO CLEAR</th><th>AVG DAYS TO CLEAR</th><th>AVG AGE OF OPEN</th></tr></thead>
+        <tbody>{d.byCategory.map((x) => <tr key={x.category}>
+          <td><div className="row-main" style={{ cursor: "default" }}><CategoryChip category={x.category} categories={[{ tag: x.category, name: x.label }]} /></div></td>
+          <td><div className="row-main" style={{ cursor: "default", fontWeight: 700 }}>{x.open}</div></td><td><div className="row-main" style={{ cursor: "default" }}>{x.cleared}</div></td><td><div className="row-main" style={{ cursor: "default" }}>{x.nudges}</div></td>
+          <td><div className="row-main" style={{ cursor: "default" }}>{num(x.avgNudgesToClear)}</div></td><td><div className="row-main" style={{ cursor: "default" }}>{num(x.avgDaysToClear)}</div></td><td><div className="row-main" style={{ cursor: "default" }}>{num(x.avgOpenAge, " days")}</div></td>
+        </tr>)}</tbody></table></div></div>
 
-      {ledgerCats.length > 0 && (
-        <div style={{ marginBottom:28 }}>
-          <h2 style={{ fontSize:15, fontWeight:700, marginBottom:4 }}>All issues, by category</h2>
-          <p style={{ fontSize:12, color:"#6b7280", marginBottom:12 }}>Everything in the tracker, found by the DMS check or added by you: how many are open, how long they take to clear, and how many nudges it takes.</p>
-          <div className="tbl-wrap"><table>
-            <thead><tr><th>CATEGORY</th><th>OPEN</th><th>CLEARED</th><th>NUDGES SENT</th><th>AVG NUDGES TO CLEAR</th><th>AVG DAYS TO CLEAR</th><th>AVG AGE OF OPEN (DAYS)</th></tr></thead>
-            <tbody>{ledgerCats.map(c => (
-              <tr key={c.category}><td>{c.label}</td><td>{c.open_issues}</td><td>{c.cleared_issues}</td><td>{c.nudges_total}</td><td>{c.avg_nudges_before_clear ?? "—"}</td><td>{c.avg_days_to_clear ?? "—"}</td><td>{c.avg_open_age_days ?? "—"}</td></tr>
-            ))}</tbody></table></div>
-        </div>
-      )}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+        <div><h2 style={{ fontSize: 15, fontWeight: 700 }}>By person</h2><p style={{ fontSize: 12, color: "#6b7280" }}>Click a column to sort.</p></div>
+        <input placeholder="🔍 Search person, email or manager…" value={q} onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 300 }} />
+      </div>
+      <div style={{ marginBottom: 28 }}><p className="scroll-hint">← swipe the table sideways to see every column →</p><div className="tbl-wrap"><table style={{ minWidth: 1100 }}>
+        <thead><tr><th>#</th>{COLS.map(([k, l]) => <th key={k} style={{ cursor: "pointer" }} onClick={() => setSort((s) => ({ key: k, dir: s.key === k ? -s.dir : (k === "name" ? 1 : -1) }))}>{l}{sort.key === k ? (sort.dir === 1 ? " ▲" : " ▼") : ""}</th>)}</tr></thead>
+        <tbody>
+          {people.map((p, i) => (
+            <tr key={p.id}>
+              <td><div className="row-main" style={{ cursor: "default", color: "#9ca3af", fontSize: 12 }}>{i + 1}</div></td>
+              <td><div className="row-main" style={{ cursor: "default", minWidth: 200 }}><div className="poc-block"><div className="poc-name">{p.name}</div><div className="poc-email">{p.email}{p.manager ? ` · ${p.manager}` : ""}</div></div></div></td>
+              <td><div className="row-main" style={{ cursor: "default", fontWeight: 700 }}>{p.open}</div></td>
+              <td><div className="row-main" style={{ cursor: "default" }}><span style={{ fontSize: 16, fontWeight: 700, color: p.nudges >= 8 ? "#dc2626" : p.nudges >= 4 ? "#d97706" : "#059669" }}>{p.nudges}</span></div></td>
+              <td><div className="row-main" style={{ cursor: "default", color: p.openAfter3 ? "#dc2626" : "#9ca3af", fontWeight: 600 }}>{p.openAfter3}</div></td>
+              <td><div className="row-main" style={{ cursor: "default", color: p.falseDone ? "#dc2626" : "#9ca3af", fontWeight: 600 }}>{p.falseDone}</div></td>
+              <td><div className="row-main" style={{ cursor: "default", color: "#6b7280" }}>{num(p.replyRate, "%")}</div></td>
+              <td><div className="row-main" style={{ cursor: "default", color: "#6b7280" }}>{num(p.avgResponseHours, "h")}</div></td>
+              <td><div className="row-main" style={{ cursor: "default", color: "#6b7280" }}>{num(p.avgDaysToClear)}</div></td>
+              <td><div className="row-main" style={{ cursor: "default", color: "#7c3aed", fontWeight: 600 }}>{p.resolved}</div></td>
+              <td><div className="row-main" style={{ cursor: "default", color: "#0e7490" }}>{p.holds}</div></td>
+              <td><div className="row-main" style={{ cursor: "default", color: "#2563eb" }}>{p.reassignedAway}</div></td>
+              <td><div className="row-main" style={{ cursor: "default", color: "#9ca3af" }}>{when(p.lastContacted)}</div></td>
+            </tr>
+          ))}
+          {!people.length && <tr><td colSpan={13}><div className="row-main" style={{ cursor: "default", color: "#9ca3af" }}>Nobody matches.</div></td></tr>}
+        </tbody></table></div></div>
 
-      {stats.length === 0 ? (
-        <div className="empty">
-          <div className="empty-icon">📊</div>
-          <h3>No data yet</h3>
-          <p>Send some outreach and frequency stats will appear here.</p>
-        </div>
-      ) : (
-        <div className="tbl-wrap">
-          <table>
-            <thead><tr>
-              <th>#</th>
-              <th>POC</th>
-              {scope === "all" && <th>OPS MEMBER</th>}
-              <th>OUTREACHES</th>
-              <th>CAMPAIGNS</th>
-              <th>FOLLOW-UPS</th>
-              {scope === "all" && <th>AUTO / SEND-NOW NUDGES</th>}
-              {scope === "all" && <th>OPEN NOW</th>}
-              {scope === "all" && <th>FALSE “DONE”</th>}
-              <th>REPLY RATE</th>
-              <th>AVG RESPONSE</th>
-              <th>RESOLVED</th>
-              <th>ESCALATED</th>
-              <th>LAST CONTACT</th>
-            </tr></thead>
-            <tbody>
-              {stats.map((s, i) => (
-                <tr key={i}>
-                  <td><div className="row-main" style={{ cursor:"default", color:"#9ca3af", fontSize:12 }}>{i+1}</div></td>
-                  <td><div className="row-main" style={{ cursor:"default" }}>
-                    <div>
-                      <div className="poc-name">{s.poc_name}</div>
-                      {s.poc_email && <div className="poc-email">{s.poc_email}</div>}
-                      {s.campaigns_list && <div style={{ fontSize:11, color:"#9ca3af", marginTop:2 }}>{s.campaigns_list}</div>}
-                    </div>
-                  </div></td>
-                  {scope === "all" && <td><div className="row-main" style={{ cursor:"default", fontSize:12, color:"#6b7280" }}>{s.user_name || "—"}</div></td>}
-                  <td><div className="row-main" style={{ cursor:"default" }}>
-                    <span style={{ fontSize:18, fontWeight:700, color: s.total_outreaches >= 5 ? "#dc2626" : s.total_outreaches >= 3 ? "#d97706" : "#059669" }}>
-                      {s.total_outreaches}
-                    </span>
-                    {s.total_outreaches >= 5 && <span style={{ fontSize:10, color:"#dc2626", marginLeft:4 }}>HIGH ⚠</span>}
-                  </div></td>
-                  <td><div className="row-main" style={{ cursor:"default", fontSize:12, color:"#6b7280" }}>{s.distinct_campaigns}</div></td>
-                  <td><div className="row-main" style={{ cursor:"default" }}>
-                    <span style={{ fontSize:14, fontWeight:600, color: s.total_followups >= 3 ? "#d97706" : "#6b7280" }}>{s.total_followups}</span>
-                  </div></td>
-                  {scope === "all" && <td><div className="row-main" style={{ cursor:"default", fontSize:13, fontWeight:600, color:"#6b7280" }}>{s.auto_nudges ?? 0}</div></td>}
-                  {scope === "all" && <td><div className="row-main" style={{ cursor:"default", fontSize:13, color:"#6b7280" }}>{s.open_now ?? 0}</div></td>}
-                  {scope === "all" && <td><div className="row-main" style={{ cursor:"default", fontSize:13, color: (s.false_done ?? 0) > 0 ? "#dc2626" : "#9ca3af", fontWeight:600 }}>{s.false_done ?? 0}</div></td>}
-                  <td><div className="row-main" style={{ cursor:"default", fontSize:12, color:"#6b7280" }}>{s.reply_rate_pct != null ? `${s.reply_rate_pct}%` : "—"}</div></td>
-                  <td><div className="row-main" style={{ cursor:"default", fontSize:12, color:"#6b7280" }}>{s.avg_response_hours != null ? `${s.avg_response_hours}h` : "—"}</div></td>
-                  <td><div className="row-main" style={{ cursor:"default", fontSize:12, color:"#7c3aed", fontWeight:600 }}>{s.resolved_count}</div></td>
-                  <td><div className="row-main" style={{ cursor:"default", fontSize:12, color:"#2563eb", fontWeight:600 }}>{s.escalated_count}</div></td>
-                  <td><div className="row-main" style={{ cursor:"default", fontSize:12, color:"#9ca3af" }}>
-                    {s.last_contacted ? new Date(s.last_contacted).toLocaleDateString() : "—"}
-                  </div></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <button className="btn btn-sm" onClick={() => setShowWeekly((v) => !v)}>{showWeekly ? "Hide" : "Show"} new vs cleared per week</button>
+      {showWeekly && <div style={{ marginTop: 10 }}><div className="tbl-wrap"><table><thead><tr><th>WEEK STARTING</th><th>CATEGORY</th><th>NEW ISSUES</th><th>SINCE CLEARED</th></tr></thead><tbody>
+        {d.weekly.map((w, i) => <tr key={i}><td><div className="row-main" style={{ cursor: "default" }}>{String(w.week).slice(0, 10)}</div></td><td><div className="row-main" style={{ cursor: "default" }}>{w.label}</div></td><td><div className="row-main" style={{ cursor: "default" }}>{w.new_issues}</div></td><td><div className="row-main" style={{ cursor: "default" }}>{w.cleared_since}</div></td></tr>)}
+      </tbody></table></div></div>}
     </div>
   );
 }

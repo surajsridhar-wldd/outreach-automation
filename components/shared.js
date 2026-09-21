@@ -493,7 +493,7 @@ export function RowMenu({ items }) {
 
 // ── Category chip — small inline tag showing a record's auto-assigned category ──
 const CAT_COLORS = ["#7c3aed","#0e7490","#b45309","#1d4ed8","#be185d","#15803d","#9333ea","#0369a1"];
-function catColor(tag) {
+export function catColor(tag) {
   if (!tag) return "#9ca3af";
   let h = 0; for (let i=0;i<tag.length;i++) h = (h*31 + tag.charCodeAt(i)) >>> 0;
   return CAT_COLORS[h % CAT_COLORS.length];
