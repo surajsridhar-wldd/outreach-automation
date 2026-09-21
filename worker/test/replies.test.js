@@ -198,3 +198,14 @@ test('executor skips unreachable people and counts a "done" claim Mongo did not 
   assert.equal(calls.sent, 1); assert.equal(r.skippedUnreachable, 1);
   assert.deepEqual(calls.fd, ['i1']); assert.equal(calls.review[0].kind, 'false_done_twice');
 });
+
+test('loop-in with a company address we have not seen creates that person; outside addresses never do', () => {
+  const r = makePersonResolver([{ dms_user_id: 'a', name: 'Ravi Kumar', email: 'ravi@wldd.in' }]);
+  const u = r('Urvashi Chauhan <urvashichauhan@wldd.in>');
+  assert.equal(u.id, 'contact:urvashichauhan@wldd.in');
+  assert.deepEqual(u.create, { dms_user_id: 'contact:urvashichauhan@wldd.in', name: 'Urvashi Chauhan', email: 'urvashichauhan@wldd.in', is_deleted: false });
+  assert.equal(r('someone@gmail.com'), null);
+  assert.deepEqual(r('ravi@wldd.in'), { id: 'a' });
+  const e = effectsFor({ item_no: 1, intent: 'loop_in', target_person: 'Urvashi Chauhan <urvashichauhan@wldd.in>', evidence: 'looping in', confidence: 0.95 }, ctx({ resolvePerson: r }));
+  assert.equal(e.effects[0].role, 'co_owner'); assert.equal(e.effects[0].createPerson.email, 'urvashichauhan@wldd.in'); assert.deepEqual(e.review, []);
+});

@@ -243,6 +243,7 @@ export function replyStore(db, { windowDays = 30 } = {}) {
         const until = cur.hold_until && cur.hold_until > e.until ? cur.hold_until : e.until;
         ok(await db.from('issues').update({ hold_until: until, hold_reason: e.reason, hold_renewals: (cur.hold_renewals || 0) + 1 }).eq('id', e.issueId).eq('state', 'open'), 'set hold');
       } else if (e.type === 'owner') {
+        if (e.createPerson) ok(await db.from('dms_people').upsert(e.createPerson, { onConflict: 'dms_user_id', ignoreDuplicates: true }), 'add person');
         const dup = ok(await db.from('issue_owners').select('id').eq('issue_id', e.issueId).eq('dms_user_id', e.dmsUserId).eq('active', true).limit(1), 'check owner');
         if (!dup.length) ok(await db.from('issue_owners').insert({ issue_id: e.issueId, dms_user_id: e.dmsUserId, role: e.role, replaces_dms_user_id: e.replaces, lead_at_creation: e.leadAtCreation, source_message_in_id: messageInId }), 'add owner');
       }

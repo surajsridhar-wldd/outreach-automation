@@ -17,7 +17,7 @@ on:
         required: false
         type: choice
         default: "run"
-        options: ["run", "selfcheck", "llmcheck", "zerocheck", "carryover", "replies", "backfill", "manualcheck"]
+        options: ["run", "selfcheck", "llmcheck", "zerocheck", "carryover", "replies", "backfill", "manualcheck", "slackcheck"]
       apply:
         description: "carryover / backfill only: yes = write the changes; anything else = dry run (nothing written)."
         required: false
@@ -87,6 +87,9 @@ jobs:
       - name: Manual send end-to-end check
         if: inputs.task == 'manualcheck'
         run: node manualcheck.js
+      - name: Slack check
+        if: inputs.task == 'slackcheck'
+        run: node slackcheck.js
       - name: Keep the full report
         if: always()
         uses: actions/upload-artifact@v4
