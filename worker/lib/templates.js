@@ -17,7 +17,7 @@ export function itemLine(item) {
     case CATEGORY.INVOICE: return `${plural(n, 'vendor invoice', 'vendor invoices')}: please review the proof of work and approve or reject`;
     case CATEGORY.CREATOR: return `${plural(n, 'submitted creator link', 'submitted creator links')}: please approve or reject`;
     case CATEGORY.SCREENSHOT: return `${plural(n, 'screenshot', 'screenshots')}: please approve or reject`;
-    case CATEGORY.CLOSING: return `Posting ended ${item.detail?.overdue_days ?? 'several'} days ago. If it is still live, extend the posting end date on DMS. If only the final report is pending, reply with an expected completion date and close the campaign on DMS`;
+    case CATEGORY.CLOSING: return `Posting ended ${item.detail?.overdue_days ?? 'several'} days ago. If the campaign is still live, please extend the posting end date on DMS. If posting is complete and only the final report is pending, please finish the report and close the campaign on DMS when it is ready, and reply with the date by which you expect to close it`;
     case CATEGORY.PROPOSAL: return `In Proposal stage for ${item.detail?.pending_days ?? 'more than 14'} days. If the campaign is not going ahead, please mark it Cancelled. If it is approved or underway, update the status to Approved or Active. If discussions are still ongoing, no immediate action is needed; reply and update DMS once confirmed`;
     case CATEGORY.ZERO_COST: {
       const note = item.detail?.internal_note ? ` (Internal note: ${String(item.detail.internal_note).slice(0, 160)})` : '';

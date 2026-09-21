@@ -81,8 +81,11 @@ export default function Tracker() {
     return [...seen.values()];
   }, [d]);
   const rows = useMemo(() => (d?.issues || []).map((i) => {
-    const person = people.get(i.owner_dms_user_id);
-    return { ...i, person, tab: tabOf(i, today), status: statusOf(i, today, d.lastReply?.[i.id]), reply: d.lastReply?.[i.id] };
+    // An unofficial handover: everything DMS says is led by one person is nudged to another. Shown under the new person.
+    const to = d.redirects?.[i.owner_dms_user_id] ? people.get(d.redirects[i.owner_dms_user_id]) : null;
+    const person = to || people.get(i.owner_dms_user_id);
+    const handedOver = to ? people.get(i.owner_dms_user_id)?.name || "the DMS lead" : null;
+    return { ...i, person, handedOver, tab: tabOf(i, today), status: statusOf(to ? { ...i, owner_state: "active" } : i, today, d.lastReply?.[i.id]), reply: d.lastReply?.[i.id] };
   }), [d, people, today]);
   const counts = useMemo(() => {
     const c = { outreach: 0, inflight: 0, snoozed: 0, resolved: 0 };
@@ -280,7 +283,7 @@ export default function Tracker() {
               {view.map((r) => (
                 <tr key={r.id}>
                   <td><Chk checked={sel.has(r.id)} onChange={() => toggle(r.id)} /></td>
-                  <td><Cell onClick={() => setDrawer(r.id)} clickable><div className="poc-block"><div className="poc-name">{r.person?.name || <span style={{ color: "#dc2626" }}>No owner</span>}</div><div className="poc-email">{r.person?.email || "—"}</div>{r.source === "manual" && <div style={{ fontSize: 10, color: "#7c3aed", marginTop: 2 }}>added by you</div>}</div></Cell></td>
+                  <td><Cell onClick={() => setDrawer(r.id)} clickable><div className="poc-block"><div className="poc-name">{r.person?.name || <span style={{ color: "#dc2626" }}>No owner</span>}</div><div className="poc-email">{r.person?.email || "—"}</div>{r.source === "manual" && <div style={{ fontSize: 10, color: "#7c3aed", marginTop: 2 }}>added by you</div>}{r.handedOver && <div style={{ fontSize: 10, color: "#0e7490", marginTop: 2 }}>handled for {r.handedOver}</div>}</div></Cell></td>
                   <td><Cell>{r.campaign_name ? <span className="campaign-pill" onClick={() => setCampDrawer(r.campaign_name)}>{r.campaign_name} ↗</span> : "—"}<div><CategoryChip category={r.category} categories={categories} /></div></Cell></td>
                   <td><Cell><div className="issue-text" style={{ minWidth: 200, maxWidth: 380 }}>{describeIssue(r)}</div></Cell></td>
                   {tab === "snoozed" ? (<>

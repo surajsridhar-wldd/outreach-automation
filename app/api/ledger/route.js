@@ -37,7 +37,9 @@ export async function GET() {
     const since = new Date(Date.now() - 60 * 86400e3).toISOString();
     const issues = await all(() => db.from("issues").select("id,source,category,campaign_name,title,issue_text,state,owner_dms_user_id,owner_state,item_count,nudge_count,last_nudged_at,hold_until,hold_reason,claimed_done_at,false_done_claims,auto_followups,first_seen_at,cleared_at,clear_reason,resolved_by,notes,detail,legacy_record_id")
       .or(`state.in.(draft,open),cleared_at.gte.${since}`).order("first_seen_at", { ascending: false }));
-    const ownerIds = [...new Set(issues.map((i) => i.owner_dms_user_id).filter(Boolean))];
+    const { data: redirRows } = await db.from("owner_redirects").select("from_dms_user_id,to_dms_user_id");
+    const redirects = Object.fromEntries((redirRows || []).map((r) => [r.from_dms_user_id, r.to_dms_user_id]));
+    const ownerIds = [...new Set([...issues.map((i) => i.owner_dms_user_id), ...Object.values(redirects)].filter(Boolean))];
     const people = [];
     for (const ids of chunk(ownerIds, 150)) {
       const { data } = await db.from("dms_people").select("dms_user_id,name,email,manager_email,unreachable_at,unreachable_reason").in("dms_user_id", ids);
@@ -60,7 +62,7 @@ export async function GET() {
     const legacyCats = (catRows || []).map((c) => ({ key: catKey(c.tag), label: c.name })).filter((c) => !AUTOMATED.has(c.key));
     const categories = [...new Map([...MANUAL_CATEGORIES.map((k) => ({ key: k, label: labelOf(k) })), ...legacyCats].map((c) => [c.key, c])).values()];
     return Response.json({
-      today: istToday(), paused: s.paused === true, mode: s.mode, issues, people, lastReply, review: review || [], categories, automated: [...AUTOMATED],
+      today: istToday(), paused: s.paused === true, mode: s.mode, issues, people, lastReply, redirects, review: review || [], categories, automated: [...AUTOMATED],
       lastRun: lastRun?.[0] ? { at: lastRun[0].started_at, mode: lastRun[0].mode, ok: lastRun[0].ok, sent: lastRun[0].stats?.sent, notes: lastRun[0].stats?.notes || [] } : null,
     });
   } catch (e) {

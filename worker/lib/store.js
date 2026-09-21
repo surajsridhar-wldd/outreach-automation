@@ -43,6 +43,14 @@ export const loadIssuesByIds = async (db, ids) => {
   return out;
 };
 export const loadOverrides = (db) => fetchAll(() => db.from('issue_owners').select('*').eq('active', true), 'load owner overrides');
+/** Person-level redirects (Map from -> to), keeping only those whose target is an active person. */
+export async function loadRedirects(db) {
+  const rows = ok(await db.from('owner_redirects').select('from_dms_user_id,to_dms_user_id'), 'load redirects');
+  if (!rows.length) return new Map();
+  const targets = ok(await db.from('dms_people').select('dms_user_id,is_deleted,email').in('dms_user_id', rows.map((r) => r.to_dms_user_id)), 'load redirect targets');
+  const okTargets = new Set(targets.filter((t) => t.is_deleted !== true && t.email).map((t) => t.dms_user_id));
+  return new Map(rows.filter((r) => okTargets.has(r.to_dms_user_id)).map((r) => [r.from_dms_user_id, r.to_dms_user_id]));
+}
 export const loadPeople = (db) => fetchAll(() => db.from('dms_people').select('*'), 'load people');
 
 export async function recentSentCounts(db, n = 4) {

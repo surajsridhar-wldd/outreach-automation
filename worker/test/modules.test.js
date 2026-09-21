@@ -115,7 +115,7 @@ test('email: one numbered line per campaign, each bullet says what to do, one sh
   assert.match(body, /^Hi Priya,/);
   assert.match(body, /1\. Alpha\n   - 2 vendor invoices: please review the proof of work and approve or reject/);
   assert.match(body, /2\. Xiaomi Plan 3\n   - 1 submitted creator link: please approve or reject\n   - 1 screenshot: please approve or reject/);
-  assert.match(body, /3\. Zeta\n   - Posting ended 12 days ago\. If it is still live, extend the posting end date on DMS\. If only the final report is pending, reply with an expected completion date/);
+  assert.match(body, /3\. Zeta\n   - Posting ended 12 days ago\. If the campaign is still live, please extend the posting end date on DMS\. If posting is complete and only the final report is pending, please finish the report and close the campaign on DMS when it is ready, and reply with the date by which you expect to close it/);
   assert.equal((body.match(/Xiaomi Plan 3/g) || []).length, 1, 'a campaign is listed once');
   assert.match(body, /Why this matters:/);
   assert.match(body, /Creator links and screenshots: timely approval helps better track metrics and reduce outstanding\/pending actions/);
@@ -194,4 +194,15 @@ test('email: a follow-up that also carries brand-new items says so, and marks th
   assert.ok(!/1 screenshot: please approve or reject \(new\)/.test(body));
   const plain = buildEmail(items.slice(0, 1), { name: 'X', senderName: 'S', kind: 'followup' }).body;
   assert.match(plain, /^Hi X,\n\nFollowing up on my earlier email\. These items are still pending/);
+});
+
+test('a person-level redirect sends everything led by one person to another, whatever DMS says', () => {
+  const redirects = new Map([['shefali', 'gulisha']]);
+  assert.deepEqual(resolveRecipients({ owner_dms_user_id: 'shefali', owner_state: 'deleted' }, [], redirects), { ownerIds: ['gulisha'], needsOwner: false });
+  assert.deepEqual(resolveRecipients({ owner_dms_user_id: 'shefali', owner_state: 'active' }, [], redirects).ownerIds, ['gulisha']);
+  assert.deepEqual(resolveRecipients({ owner_dms_user_id: 'other', owner_state: 'active' }, [], redirects).ownerIds, ['other']);
+  // an explicit reassignment from a reply still wins, and a co-owner is added on top
+  const re = { role: 'reassigned_to', dms_user_id: 'newbie', lead_at_creation: 'shefali', active: true };
+  assert.deepEqual(resolveRecipients({ owner_dms_user_id: 'shefali', owner_state: 'deleted' }, [re], redirects).ownerIds, ['newbie']);
+  assert.deepEqual(resolveRecipients({ owner_dms_user_id: 'shefali', owner_state: 'deleted' }, [], new Map()), { ownerIds: [], needsOwner: true });
 });
