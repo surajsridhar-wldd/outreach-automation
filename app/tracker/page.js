@@ -482,7 +482,7 @@ function SnoozeModal({ today, count, onClose, onPick }) {
   return (
     <div className="modal-overlay"><div className="modal">
       <h3>Snooze {count > 1 ? `${count} issues` : "issue"}</h3>
-      <p style={{ fontSize: 13, color: "#6b7280", marginBottom: 16 }}>Hidden from In Flight until the day after this date, then back on the normal follow-up schedule. Nothing is sent while snoozed, not even for the month-end invoice push.</p>
+      <p style={{ fontSize: 13, color: "#6b7280", marginBottom: 16 }}>Hidden from In Flight until the day after this date, then back on the normal follow-up schedule. Nothing is sent while snoozed. The one exception: invoice approvals during the month-end push (the last week of the month), because unapproved invoices auto-reject at month end.</p>
       <div className="form-field"><label>Snooze until</label>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>{presets.map(([l, v]) => <button key={l} className={`btn btn-sm ${date === v ? "btn-primary" : ""}`} onClick={() => setDate(v)}>{l}</button>)}</div>
         <input type="date" min={today} value={date} onChange={(e) => setDate(e.target.value)} /></div>
