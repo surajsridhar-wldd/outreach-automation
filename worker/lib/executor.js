@@ -25,6 +25,7 @@ const prettyDate = (dateStr) => `${Number(dateStr.slice(8, 10))} ${MONTHS[Number
 export async function executePlan({
   plan, mode, now, runId, store, senders, issuesById, people,
   holidays = new Set(), recentRunCounts = [],
+  channel = 'email', // manual sends only: 'email' or 'slack' (a Slack DM with the same numbered list)
   manual = false, // the owner pressed "send now": no send window, no breaker, no once-a-day rule; everything else is identical
   settings = {}, // { allowlist: [], redirectTo, senderName, senderEmail, sendWindow: {start_hour,end_hour} }
 }) {
@@ -72,6 +73,31 @@ export async function executePlan({
       hasInvoice: items.some((i) => i.category === CATEGORY.INVOICE),
     });
 
+    // Manual send by Slack DM: same list, same counting, no email.
+    if (manual && channel === 'slack') {
+      const slackId = await store.insertMessage({ run_id: runId, recipient_dms_user_id: m.recipientId, channel: 'slack', lane: m.lane, kind: m.kind, status: 'sending', body: built.body, mode });
+      await store.insertItems(m.items.map((it) => ({ message_out_id: slackId, issue_id: it.issueId, item_no: built.itemNumbers[it.issueId] ?? null, nudge_no: it.nextN ?? null })));
+      let sl;
+      try {
+        sl = await senders.slack({ person, text: built.body, idempotencyKey: slackId });
+        if (!sl.ok) throw new Error(sl.error || 'Slack send failed');
+      } catch (e) {
+        stats.failed++;
+        await store.updateMessage(slackId, { status: 'failed', error: e.message });
+        await store.addReviewItem({ kind: 'send_failed', note: `Slack DM to ${person.email} failed: ${e.message}` });
+        continue;
+      }
+      await store.updateMessage(slackId, { status: 'sent', sent_at: nowIso, slack_ts: sl.ts, slack_channel_id: sl.channel });
+      stats.sent++;
+      await store.savePersonThread(m.recipientId, { slack_user_id: sl.slackUserId, slack_dm_channel_id: sl.channel });
+      await store.applySent({ issues: m.items.map((it) => ({ id: it.issueId, nudgeCount: issuesById.get(it.issueId)?.nudge_count ?? 0 })), recipientIds: [m.recipientId], deferredIds: [], nowIso });
+      for (const it of items.filter((i) => i.claimedDone)) {
+        const n = await store.recordFalseDone?.(it.issueId);
+        if (n >= 2) await store.addReviewItem({ kind: 'false_done_twice', issue_id: it.issueId, note: `${person.name} has said "done" twice for ${it.campaign_name}, but DMS still shows it as pending.` });
+      }
+      continue;
+    }
+
     let cc = [];
     if (m.ccManager) {
       const manager = person.manager_override_email || person.manager_email;
@@ -81,9 +107,6 @@ export async function executePlan({
         await store.addReviewItem({ kind: 'manager_missing', note: `${person.name} reached nudge 4+ but has no manager on file, so nobody was copied.` });
       }
     }
-
-    // Zero-cost-service reminders have always copied the inventory team.
-    if (items.some((i) => i.category === CATEGORY.ZERO_COST) && settings.inventoryCc && !cc.includes(settings.inventoryCc)) cc = [...cc, settings.inventoryCc];
 
     const isReal = mode === 'live' || (mode === 'canary' && (allow.has(person.email.toLowerCase()) || allow.has(String(person.dms_user_id).toLowerCase())));
     const rehearse = mode === 'rehearsal' && rehearsalSent < rehearsalMax;

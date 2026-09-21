@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { requireUser, unauthorized } from "@/lib/session";
 import { db } from "@/lib/supabase";
 import { sendIssues } from "@/lib/ledgerSend.mjs";
+import { checkRepliesFor } from "@/lib/checkReplies.mjs";
 import { catKey, labelOf, MANUAL_CATEGORIES, normName, dedupeKey, normalizeRows, parseTable } from "@/lib/ledger.mjs";
 import { readSheet } from "@/lib/sheets";
 
@@ -36,11 +37,20 @@ export async function GET() {
     const since = new Date(Date.now() - 60 * 86400e3).toISOString();
     const issues = await all(() => db.from("issues").select("id,source,category,campaign_name,title,issue_text,state,owner_dms_user_id,owner_state,item_count,nudge_count,last_nudged_at,hold_until,hold_reason,claimed_done_at,false_done_claims,auto_followups,first_seen_at,cleared_at,clear_reason,resolved_by,notes,detail,legacy_record_id")
       .or(`state.in.(draft,open),cleared_at.gte.${since}`).order("first_seen_at", { ascending: false }));
-    const ownerIds = [...new Set(issues.map((i) => i.owner_dms_user_id).filter(Boolean))];
+    const { data: redirRows } = await db.from("owner_redirects").select("from_dms_user_id,to_dms_user_id");
+    const redirects = Object.fromEntries((redirRows || []).map((r) => [r.from_dms_user_id, r.to_dms_user_id]));
+    const ownerIds = [...new Set([...issues.map((i) => i.owner_dms_user_id), ...Object.values(redirects)].filter(Boolean))];
     const people = [];
     for (const ids of chunk(ownerIds, 150)) {
       const { data } = await db.from("dms_people").select("dms_user_id,name,email,manager_email,unreachable_at,unreachable_reason").in("dms_user_id", ids);
       people.push(...(data || []));
+    }
+    // The latest reply read for each open issue (shown as a green "Replied" status with what they said).
+    const openIds = issues.filter((i) => i.state !== "cleared").map((i) => i.id);
+    const lastReply = {};
+    for (const ids of chunk(openIds, 120)) {
+      const { data } = await db.from("interpretations").select("issue_id,intent,evidence,promised_date,created_at,messages_in(received_at)").in("issue_id", ids).gte("created_at", since).order("created_at", { ascending: false });
+      for (const r of data || []) if (!lastReply[r.issue_id]) lastReply[r.issue_id] = { intent: r.intent, evidence: r.evidence, promised_date: r.promised_date, at: r.messages_in?.received_at || r.created_at };
     }
     const [{ data: review }, { data: settings }, { data: catRows }, { data: lastRun }] = await Promise.all([
       db.from("review_items").select("id,kind,note,created_at,issue_id,payload,issues(campaign_name,category)").eq("status", "open").order("created_at", { ascending: false }).limit(300),
@@ -52,7 +62,7 @@ export async function GET() {
     const legacyCats = (catRows || []).map((c) => ({ key: catKey(c.tag), label: c.name })).filter((c) => !AUTOMATED.has(c.key));
     const categories = [...new Map([...MANUAL_CATEGORIES.map((k) => ({ key: k, label: labelOf(k) })), ...legacyCats].map((c) => [c.key, c])).values()];
     return Response.json({
-      today: istToday(), paused: s.paused === true, mode: s.mode, issues, people, review: review || [], categories, automated: [...AUTOMATED],
+      today: istToday(), paused: s.paused === true, mode: s.mode, issues, people, lastReply, redirects, review: review || [], categories, automated: [...AUTOMATED],
       lastRun: lastRun?.[0] ? { at: lastRun[0].started_at, mode: lastRun[0].mode, ok: lastRun[0].ok, sent: lastRun[0].stats?.sent, notes: lastRun[0].stats?.notes || [] } : null,
     });
   } catch (e) {
@@ -74,11 +84,14 @@ async function findPerson(row) {
 }
 
 async function importRows(body, user) {
-  let values;
-  try {
-    values = body.sheetUrl ? await readSheet(body.sheetUrl) : parseTable(body.csvText || "");
-  } catch (e) { return { status: 400, error: `Could not read: ${e.message}` }; }
-  const rows = normalizeRows(values);
+  let rows = body.rowsOverride;
+  if (!rows) {
+    let values;
+    try {
+      values = body.sheetUrl ? await readSheet(body.sheetUrl) : parseTable(body.csvText || "");
+    } catch (e) { return { status: 400, error: `Could not read: ${e.message}` }; }
+    rows = normalizeRows(values);
+  }
   if (!rows.length) return { status: 400, error: "No data rows found (the first row must be the column names)" };
   const result = { created: 0, refreshed: 0, skipped: [] };
   for (const row of rows) {
@@ -106,6 +119,35 @@ async function importRows(body, user) {
   return { status: 200, ...result };
 }
 
+// Reconcile a hand-added category against a complete list: anything of yours that is no longer on the list is resolved,
+// anything on the list that is not tracked yet is added as a draft. Preview first, then apply.
+async function reconcile(body, user) {
+  const category = catKey(body.category);
+  if (AUTOMATED.has(category)) return { status: 400, error: "That category is found by the DMS check, so it reconciles itself" };
+  let values;
+  try { values = body.sheetUrl ? await readSheet(body.sheetUrl) : parseTable(body.csvText || ""); } catch (e) { return { status: 400, error: `Could not read: ${e.message}` }; }
+  const rows = normalizeRows(values);
+  if (!rows.length) return { status: 400, error: "No data rows found (the first row must be the column names)" };
+  const present = new Set(); const toCreate = [];
+  for (const row of rows) {
+    const found = await findPerson(row);
+    const p = found.person || found.create;
+    if (!p) continue;
+    const key = dedupeKey(p.dms_user_id, row.campaign || row.issue.slice(0, 60), category);
+    present.add(key);
+    toCreate.push({ row, key, ownerId: p.dms_user_id });
+  }
+  const { data: mine } = await db.from("issues").select("id,campaign_name,owner_dms_user_id,state").eq("source", "manual").eq("category", category).in("state", ["draft", "open"]);
+  const have = new Map((mine || []).map((i) => [dedupeKey(i.owner_dms_user_id, i.campaign_name, category), i]));
+  const toResolve = (mine || []).filter((i) => !present.has(dedupeKey(i.owner_dms_user_id, i.campaign_name, category)));
+  const missing = toCreate.filter((c) => !have.has(c.key));
+  if (!body.apply) return { status: 200, preview: true, toResolve: toResolve.length, toAdd: missing.length, unchanged: (mine || []).length - toResolve.length };
+  if (toResolve.length) await db.from("issues").update({ state: "cleared", cleared_at: new Date().toISOString(), clear_reason: "no longer on the reconciled list", resolved_by: user.email }).in("id", toResolve.map((i) => i.id));
+  let added = 0;
+  if (missing.length) { const r = await importRows({ ...body, csvText: undefined, sheetUrl: undefined, rowsOverride: missing.map((m) => m.row), category }, user); added = r.created || 0; }
+  return { status: 200, resolved: toResolve.length, added };
+}
+
 export async function POST(req) {
   const a = await admin(); if (a.res) return a.res;
   const body = await req.json().catch(() => ({}));
@@ -121,7 +163,7 @@ export async function POST(req) {
       case "send": {
         if (!ids.length) return fail("Select something to send");
         if (ids.length > 25) return fail("Send at most 25 at a time");
-        const r = await sendIssues(ids);
+        const r = await sendIssues(ids, { channel: body.channel === "slack" ? "slack" : "email" });
         return r.error ? fail(r.error, r.status) : done(r);
       }
       case "snooze": {
@@ -155,6 +197,32 @@ export async function POST(req) {
       case "followups": {
         const { error } = await db.from("issues").update({ auto_followups: body.on === true }).in("id", ids).eq("source", "manual");
         return error ? fail(error.message, 500) : done();
+      }
+      case "check_replies": {
+        if (!ids.length) return fail("Select something to check");
+        const { data: rows } = await db.from("issues").select("owner_dms_user_id").in("id", ids);
+        const owners = [...new Set((rows || []).map((r) => r.owner_dms_user_id).filter(Boolean))].slice(0, 8);
+        const st = await checkRepliesFor(owners);
+        return done({ threads: st.threadsRead, newReplies: st.newMessages, read: st.interpreted, changes: st.effects, forReview: st.reviewItems, errors: st.llmErrors, capReached: st.skippedCap });
+      }
+      case "edit": {
+        const patch = {};
+        if (typeof body.campaign === "string" && body.campaign.trim()) { patch.campaign_name = body.campaign.trim(); patch.title = body.campaign.trim(); }
+        if (typeof body.issue_text === "string") patch.issue_text = body.issue_text.trim();
+        if (typeof body.category === "string" && body.category && !AUTOMATED.has(catKey(body.category))) patch.category = catKey(body.category);
+        if (!Object.keys(patch).length) return fail("Nothing to change");
+        const { error } = await db.from("issues").update(patch).eq("id", ids[0]).eq("source", "manual");
+        return error ? fail(error.message, 500) : done();
+      }
+      case "set_category": {
+        const key = catKey(body.category);
+        if (AUTOMATED.has(key)) return fail("That category is found by the DMS check, not set by hand");
+        const { error } = await db.from("issues").update({ category: key }).in("id", ids).eq("source", "manual");
+        return error ? fail(error.message, 500) : done();
+      }
+      case "reconcile": {
+        const r = await reconcile(body, a.user);
+        return r.error ? fail(r.error, r.status) : done(r);
       }
       case "note": {
         const { error } = await db.from("issues").update({ notes: String(body.text || "").slice(0, 2000) }).eq("id", ids[0]);

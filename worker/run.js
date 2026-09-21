@@ -103,8 +103,8 @@ export async function main(env = process.env) {
     const itemStats = await S.syncItems(db, { openIssues: (await S.loadOpenIssues(db)).filter((i) => i.source !== 'manual'), fetched, nowIso: realNow.toISOString() });
 
     // 2. Build the planner input from the freshly synced state.
-    const [openRows, overrides, peopleRows, holidays, recentCounts] = await Promise.all([
-      S.loadOpenIssues(db), S.loadOverrides(db), S.loadPeople(db), S.loadHolidays(db), S.recentSentCounts(db),
+    const [openRows, overrides, peopleRows, holidays, recentCounts, redirects] = await Promise.all([
+      S.loadOpenIssues(db), S.loadOverrides(db), S.loadPeople(db), S.loadHolidays(db), S.recentSentCounts(db), S.loadRedirects(db),
     ]);
     const overridesByIssue = new Map();
     for (const o of overrides) overridesByIssue.set(o.issue_id, [...(overridesByIssue.get(o.issue_id) || []), o]);
@@ -113,7 +113,7 @@ export async function main(env = process.env) {
     const enabled = Array.isArray(settings.enabled_categories) ? new Set(settings.enabled_categories) : null;
     // Manual issues follow their own switch (auto_followups) and are never touched by the category switch or the Mongo guard.
     const plannerIssues = openRows.filter((r) => r.source === 'manual' ? r.auto_followups !== false : (!suspect.has(r.category) && (!enabled || enabled.has(r.category)))).map((r) => {
-      const { ownerIds, needsOwner } = resolveRecipients(r, overridesByIssue.get(r.id) || []);
+      const { ownerIds, needsOwner } = resolveRecipients(r, overridesByIssue.get(r.id) || [], redirects);
       return { id: r.id, category: r.category, ownerIds, needsOwner, nudgeCount: r.nudge_count, lastNudgedAt: r.last_nudged_at, holdUntil: r.hold_until, firstSeenAt: r.first_seen_at };
     });
     const people = new Map(peopleRows.map((p) => [p.dms_user_id, p]));
@@ -140,7 +140,7 @@ export async function main(env = process.env) {
       recentRunCounts: recentCounts,
       settings: {
         senderName: senderRow.name, senderEmail: senderRow.gmail_address, redirectTo: settings.rehearsal_redirect_to,
-        allowlist: settings.canary_allowlist || [], inventoryCc: settings.inventory_cc || 'inventory@wldd.in', sendWindow: settings.send_window, rehearsalMax: settings.rehearsal_max,
+        allowlist: settings.canary_allowlist || [], sendWindow: settings.send_window, rehearsalMax: settings.rehearsal_max,
       },
     });
     if (exec.rampDone) await S.setSetting(db, 'ramp_active', false);

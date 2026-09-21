@@ -7,7 +7,7 @@
 // An override is only valid while the DMS lead is still the person it was created against:
 // if the lead changes in DMS, DMS wins and the overrides are ignored.
 
-export function resolveRecipients(issue, overrides = []) {
+export function resolveRecipients(issue, overrides = [], redirects = new Map()) {
   const lead = issue.owner_dms_user_id || null;
   const leadActive = issue.owner_state === 'active';
   const valid = overrides.filter((o) => o.active !== false && o.lead_at_creation === lead);
@@ -15,7 +15,10 @@ export function resolveRecipients(issue, overrides = []) {
   const coOwners = valid.filter((o) => o.role === 'co_owner').map((o) => o.dms_user_id);
 
   const ids = new Set();
+  // A person-level redirect (an unofficial handover) replaces the DMS lead, whatever DMS says.
+  const redirectedTo = lead ? redirects.get(lead) : null;
   if (reassigned.length) reassigned.forEach((id) => ids.add(id));
+  else if (redirectedTo) ids.add(redirectedTo);
   else if (leadActive && lead) ids.add(lead);
   coOwners.forEach((id) => ids.add(id));
 

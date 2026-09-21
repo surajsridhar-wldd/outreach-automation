@@ -3,7 +3,10 @@
 
 import { addDays } from './time.js';
 
-export const DEFAULT_HOLD_CAPS = { invoice_approvals: 5, creator_submissions: 21, screenshot_approvals: 21, pending_closings: 21, pending_proposals: 21 };
+export const DEFAULT_HOLD_CAPS = { invoice_approvals: 5, creator_submissions: 21, screenshot_approvals: 21, pending_closings: 21, pending_proposals: 35 };
+// Benefit of the doubt: for a proposal, whatever timeline the lead gives we wait a week longer before reminding them again
+// (deals often take longer than estimated, and pestering during talks does harm).
+export const HOLD_GRACE_DAYS = { pending_proposals: 7 };
 const MIN_CONFIDENCE = 0.6;
 const DEFAULT_HOLD_DAYS = 7;
 
@@ -42,6 +45,7 @@ export function effectsFor(interp, ctx) {
         const cap = caps[t.category] ?? 21;
         const latest = addDays(ctx.todayIst, cap);
         let until = isDate(interp.promised_date) && interp.promised_date >= ctx.todayIst ? interp.promised_date : addDays(ctx.todayIst, DEFAULT_HOLD_DAYS);
+        until = addDays(until, HOLD_GRACE_DAYS[t.category] || 0);
         const capped = until > latest;
         if (capped) until = latest;
         out.effects.push({ type: 'hold', issueId: t.issueId, until, reason: `${interp.intent}: ${interp.evidence}`.slice(0, 200), capped });
@@ -51,7 +55,7 @@ export function effectsFor(interp, ctx) {
     case 'waiting_on': {
       if (!ctx.fromOwner) break;
       // Waiting on someone else earns the default hold, and is worth a look if it is an internal person.
-      for (const t of targets) out.effects.push({ type: 'hold', issueId: t.issueId, until: addDays(ctx.todayIst, Math.min(DEFAULT_HOLD_DAYS, caps[t.category] ?? 21)), reason: `waiting on ${interp.target_person || 'someone'}`, capped: false });
+      for (const t of targets) out.effects.push({ type: 'hold', issueId: t.issueId, until: addDays(ctx.todayIst, Math.min(DEFAULT_HOLD_DAYS + (HOLD_GRACE_DAYS[t.category] || 0), caps[t.category] ?? 21)), reason: `waiting on ${interp.target_person || 'someone'}`, capped: false });
       break;
     }
     case 'loop_in':

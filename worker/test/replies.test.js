@@ -209,3 +209,19 @@ test('loop-in with a company address we have not seen creates that person; outsi
   const e = effectsFor({ item_no: 1, intent: 'loop_in', target_person: 'Urvashi Chauhan <urvashichauhan@wldd.in>', evidence: 'looping in', confidence: 0.95 }, ctx({ resolvePerson: r }));
   assert.equal(e.effects[0].role, 'co_owner'); assert.equal(e.effects[0].createPerson.email, 'urvashichauhan@wldd.in'); assert.deepEqual(e.review, []);
 });
+
+test('proposals get one extra week on top of any timeline the lead gives (benefit of the doubt), still capped', () => {
+  const prop = [{ n: 1, issueId: 'p1', category: 'pending_proposals', ownerId: 'u1' }];
+  const c = { todayIst: '2026-09-21', items: prop, fromOwner: true, senderId: 'u1', resolvePerson: () => null };
+  const dated = effectsFor({ item_no: 1, intent: 'promise_with_date', promised_date: '2026-09-25', evidence: 'this week', confidence: 0.9 }, c);
+  assert.equal(dated.effects[0].until, '2026-10-02');                       // Friday + 7 days
+  const open = effectsFor({ item_no: 1, intent: 'hold', evidence: 'talks are still going on', confidence: 0.9 }, c);
+  assert.equal(open.effects[0].until, '2026-10-05');                       // default 7 days + 7 days grace
+  const waiting = effectsFor({ item_no: 1, intent: 'waiting_on', target_person: 'the client', evidence: 'x', confidence: 0.9 }, c);
+  assert.equal(waiting.effects[0].until, '2026-10-05');
+  const far = effectsFor({ item_no: 1, intent: 'hold', promised_date: '2027-06-01', evidence: 'x', confidence: 0.9 }, c);
+  assert.equal(far.effects[0].until, '2026-10-26'); assert.equal(far.effects[0].capped, true);   // 35-day cap
+  // other categories are unchanged
+  const closing = effectsFor({ item_no: 1, intent: 'promise_with_date', promised_date: '2026-09-25', evidence: 'x', confidence: 0.9 }, { ...c, items: [{ n: 1, issueId: 'c1', category: 'pending_closings', ownerId: 'u1' }] });
+  assert.equal(closing.effects[0].until, '2026-09-25');
+});

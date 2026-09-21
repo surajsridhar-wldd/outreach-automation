@@ -7,7 +7,7 @@ import { interpretReply } from "@/worker/lib/llm.js";
 import { sendIssues } from "@/lib/ledgerSend.mjs";
 import { verifyRequest, processSendRequest, processReadRequest, READ_TYPES } from "@/lib/nudgeSend.mjs";
 
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 export async function POST(req) {
   const raw = await req.text();
