@@ -60,3 +60,24 @@ test('snoozes explain themselves in plain words', () => {
   assert.equal(holdInfo({}), null);
   assert.equal(statusOf({ state: 'open', nudge_count: 1, hold_until: '2026-09-30' }, '2026-09-21').label, 'Snoozed till 30 Sep');
 });
+
+import { computeFrequency } from '../../lib/frequency.mjs';
+test('frequency: cards, categories and people are computed from the ledger', () => {
+  const now = new Date('2026-09-21T10:00:00Z');
+  const issues = [
+    { id: 'a', category: 'screenshot_approvals', state: 'open', owner_dms_user_id: 'u1', nudge_count: 3, false_done_claims: 1, hold_renewals: 0, first_seen_at: '2026-09-01T00:00:00Z' },
+    { id: 'b', category: 'screenshot_approvals', state: 'open', owner_dms_user_id: 'u1', nudge_count: 0, first_seen_at: '2026-09-19T00:00:00Z' },
+    { id: 'c', category: 'pending_closings', state: 'cleared', owner_dms_user_id: 'u2', nudge_count: 2, first_seen_at: '2026-09-01T00:00:00Z', cleared_at: '2026-09-11T00:00:00Z' },
+  ];
+  const people = [{ dms_user_id: 'u1', name: 'A', email: 'a@x', manager_email: 'm@x' }, { dms_user_id: 'u2', name: 'B', email: 'b@x' }, { dms_user_id: 'u3', name: 'Nobody', email: 'n@x' }];
+  const sends = [{ id: 's1', recipient_dms_user_id: 'u1', sent_at: '2026-09-20T05:00:00Z' }, { id: 's2', recipient_dms_user_id: 'u1', sent_at: '2026-09-10T05:00:00Z' }];
+  const replies = [{ sender_dms_user_id: 'u1', received_at: '2026-09-20T07:00:00Z', in_reply_to_message_out_id: 's1' }];
+  const f = computeFrequency({ issues, people, sends, replies, outs: new Map(sends.map((s) => [s.id, s.sent_at])), now });
+  assert.deepEqual([f.cards.open, f.cards.nudgedOpen, f.cards.notYetNudged, f.cards.nudgesLast7, f.cards.falseDone, f.cards.avgDaysToClear], [2, 1, 1, 1, 1, 10]);
+  const shots = f.byCategory.find((c) => c.category === 'screenshot_approvals');
+  assert.deepEqual([shots.open, shots.nudges], [2, 3]);
+  const closings = f.byCategory.find((c) => c.category === 'pending_closings');
+  assert.deepEqual([closings.cleared, closings.avgNudgesToClear, closings.avgDaysToClear], [1, 2, 10]);
+  assert.equal(f.byPerson.length, 2, 'people with nothing to report are left out');
+  assert.deepEqual([f.byPerson[0].name, f.byPerson[0].openAfter3, f.byPerson[0].replyRate, f.byPerson[0].avgResponseHours], ['A', 1, 50, 2]);
+});

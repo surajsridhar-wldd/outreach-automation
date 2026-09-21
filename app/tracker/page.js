@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
-import { SC, DaysChip, days, CategoryChip, BulkBar, RowMenu } from "@/components/shared";
+import { SC, DaysChip, days, CategoryChip, BulkBar, RowMenu, catColor } from "@/components/shared";
 import { tabOf, labelOf, describeIssue, statusOf, holdInfo, fmtDay } from "@/lib/ledger.mjs";
 
 // One tracker for everything. Issues the DMS check finds and issues you add by hand sit in the same list, follow the same
@@ -13,6 +13,7 @@ const TABS = [
   { id: "review", label: "Review", help: "Things that need a person: replies the system was not sure about, issues with no owner, unclear cases." },
   { id: "snoozed", label: "Snoozed", help: "Paused until a date. Nothing goes out for these until the day after. Replies asking for time land here automatically." },
   { id: "resolved", label: "Resolved", help: "Closed by DMS (it stopped flagging them) or by you. Last 60 days." },
+  { id: "excluded", label: "Excluded", help: "Zero-cost-service cases that are never nudged: the ones you excluded, and the ones DMS notes say the internal team handled. Undo any of them here." },
 ];
 const KIND = {
   needs_owner: "Needs owner", low_confidence: "Please check", ambiguous_redirect: "Who is the new owner?", ladder_exhausted: "Five nudges, no result",
@@ -53,12 +54,16 @@ export default function Tracker() {
   const [progress, setProgress] = useState(null);
   const [catPicker, setCatPicker] = useState(false);
   const [imp, setImp] = useState({ text: "", sheet: "", category: "revenue_mismatch", auto: true });
+  const [aux, setAux] = useState(null);            // run log, replies, zero-cost decisions (from /api/nudges)
+  const [activity, setActivity] = useState(false);
 
   const load = useCallback(async () => {
     const r = await fetch("/api/ledger"); const j = await r.json();
     if (!r.ok) return setErr(j.error || "Could not load");
     setErr(null); setD(j);
   }, []);
+  const loadAux = useCallback(async () => { try { const r = await fetch("/api/nudges"); if (r.ok) setAux(await r.json()); } catch {} }, []);
+  useEffect(() => { loadAux(); }, [loadAux]);
   useEffect(() => { load(); const f = () => document.visibilityState === "visible" && load(); document.addEventListener("visibilitychange", f); window.addEventListener("focus", load); return () => { document.removeEventListener("visibilitychange", f); window.removeEventListener("focus", load); }; }, [load]);
   useEffect(() => { setSel(new Set()); setFStatus(""); setFCamp(""); }, [tab]);
   const show = (msg, type = "info") => { setToast({ msg, type }); setTimeout(() => setToast(null), 7000); };
@@ -69,7 +74,7 @@ export default function Tracker() {
       const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) { show(`⚠ ${j.error || "Something went wrong"}`, "error"); return null; }
-      await load(); return j;
+      await load(); if (url === "/api/nudges") await loadAux(); return j;
     } finally { setBusy(false); }
   }
 
@@ -92,9 +97,22 @@ export default function Tracker() {
     for (const r of rows) c[r.tab]++;
     // Needs-owner issues have their own section; they are not counted twice.
     c.review = (d?.review || []).filter((r) => r.kind !== "needs_owner").length + rows.filter((r) => r.status.key === "noowner" && r.state !== "cleared").length;
+    c.excluded = (aux?.zeroDecisions || []).filter((x) => x.decision === "exclude").length + (aux?.zeroStats?.autoExcluded?.length || 0);
     return c;
-  }, [rows, d]);
+  }, [rows, d, aux]);
 
+  // Scorecards: records in flight per category, split into already nudged / yet to nudge.
+  const catStats = useMemo(() => {
+    const m = new Map();
+    for (const r of rows) {
+      if (r.tab !== "inflight" && r.tab !== "snoozed") continue;
+      const c = m.get(r.category) || { cat: r.category, total: 0, nudged: 0, notYet: 0, snoozed: 0 };
+      if (r.tab === "snoozed") c.snoozed++; else { c.total++; if ((r.nudge_count || 0) > 0) c.nudged++; else c.notYet++; }
+      m.set(r.category, c);
+    }
+    return [...m.values()].filter((c) => c.total > 0 || c.snoozed > 0).sort((a, b) => b.total - a.total);
+  }, [rows]);
+  const listTab = tab !== "review" && tab !== "excluded";
   const inTab = rows.filter((r) => r.tab === tab);
   const ql = q.trim().toLowerCase();
   const view = inTab.filter((r) => (!fCat || r.category === fCat) && (!fSrc || r.source === fSrc) && (!fStatus || r.status.key === fStatus) && (!fCamp || r.campaign_name === fCamp)
@@ -169,6 +187,7 @@ export default function Tracker() {
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <LBadge palette={d.paused ? "no_reply" : "active"} label={d.paused ? "Automation paused" : `Automation ${d.mode}${d.lastRun ? ` · last run ${when(d.lastRun.at)}` : ""}`} />
           <button className={`btn btn-sm ${d.paused ? "btn-green" : "btn-red"}`} disabled={busy} onClick={togglePause}>{d.paused ? "▶ Resume" : "⏸ Pause"}</button>
+          <button className="btn btn-sm" onClick={() => setActivity(true)} title="Recent automatic runs, replies read and emails sent">📋 Run log</button>
           <button className="btn btn-sm" onClick={exportCsv}>⬇ Export CSV</button>
           <button className="btn btn-sm" onClick={load}>↻ Refresh</button>
         </div>
@@ -183,7 +202,7 @@ export default function Tracker() {
       </div>
       <p style={{ fontSize: 12, color: "#9ca3af", marginBottom: 12 }}>{TABS.find((t) => t.id === tab).help}</p>
 
-      {tab !== "review" && (
+      {listTab && (
         <div style={{ marginBottom: 16 }}><input placeholder="🔍 Search by person, campaign, email, category or issue…" value={q} onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 440 }} /></div>
       )}
 
@@ -213,6 +232,21 @@ export default function Tracker() {
         </div>
       )}
 
+      {tab === "inflight" && catStats.length > 0 && (<>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#9ca3af", letterSpacing: ".8px", margin: "2px 0 8px" }}>IN FLIGHT BY CATEGORY</div>
+        <div className="stat-grid" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(190px,1fr))", marginBottom: 14 }}>
+          {catStats.map((c) => {
+            const col = catColor(c.cat);
+            return (
+              <div key={c.cat} className="stat-card" style={{ borderColor: fCat === c.cat ? col : undefined, background: fCat === c.cat ? `${col}0d` : undefined }} onClick={() => setFCat(fCat === c.cat ? "" : c.cat)}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}><div className="stat-num" style={{ color: col }}>{c.total}</div><div style={{ fontSize: 11, color: "#6b7280" }}>({c.nudged} nudged · {c.notYet} yet to nudge{c.snoozed ? ` · ${c.snoozed} snoozed` : ""})</div></div>
+                <div className="stat-label">{labelOf(c.cat)}</div>
+              </div>
+            );
+          })}
+        </div>
+        {statusStats.length > 1 && <div style={{ fontSize: 11, fontWeight: 700, color: "#9ca3af", letterSpacing: ".8px", margin: "2px 0 8px" }}>BY STATUS</div>}
+      </>)}
       {statusStats.length > 1 && (
         <div className="stat-grid" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(150px,1fr))" }}>
           {statusStats.sort((a, b) => b[1] - a[1]).map(([k, n]) => {
@@ -227,7 +261,7 @@ export default function Tracker() {
         </div>
       )}
 
-      {tab !== "review" && (
+      {listTab && (
         <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
           <select value={fCat} onChange={(e) => setFCat(e.target.value)} style={{ width: "auto", minWidth: 160 }}><option value="">All categories</option>{categories.map((c) => <option key={c.tag} value={c.tag}>{c.name}</option>)}</select>
           <select value={fSrc} onChange={(e) => setFSrc(e.target.value)} style={{ width: "auto", minWidth: 170 }}><option value="">DMS check + added by me</option><option value="mongo">Found by the DMS check</option><option value="manual">Added by me</option></select>
@@ -237,7 +271,7 @@ export default function Tracker() {
         </div>
       )}
 
-      {tab !== "review" && view.length > 0 && (
+      {listTab && view.length > 0 && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
           <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>
             <input type="checkbox" style={{ width: "auto" }} checked={allOn} onChange={() => setSel(allOn ? new Set() : new Set(view.map((r) => r.id)))} />
@@ -246,7 +280,7 @@ export default function Tracker() {
         </div>
       )}
 
-      {tab !== "review" && (
+      {listTab && (
         <BulkBar selected={chosen.length}>
           {tab !== "resolved" && <div className="channel-toggle">
             <button className={`ch-btn ${channel === "email" ? "active" : ""}`} onClick={() => setChannel("email")}>📧 Email</button>
@@ -273,12 +307,12 @@ export default function Tracker() {
         </BulkBar>
       )}
 
-      {tab === "review" ? <ReviewTab d={d} rows={rows} busy={busy} post={post} setDrawer={setDrawer} setCampDrawer={setCampDrawer} categories={categories} /> : view.length === 0 ? (
+      {tab === "excluded" ? <ExcludedTab aux={aux} busy={busy} post={post} /> : tab === "review" ? <ReviewTab d={d} rows={rows} busy={busy} post={post} setDrawer={setDrawer} setCampDrawer={setCampDrawer} categories={categories} /> : view.length === 0 ? (
         <div className="empty"><div className="empty-icon">{tab === "outreach" ? "📋" : tab === "snoozed" ? "💤" : tab === "resolved" ? "✅" : "📬"}</div><h3>{fStatus || fCat || fSrc || fCamp || ql ? "Nothing matches these filters" : tab === "outreach" ? "Nothing waiting to be sent" : tab === "snoozed" ? "Nothing snoozed" : tab === "resolved" ? "Nothing resolved yet" : "Nothing in flight"}</h3><p>{tab === "outreach" ? "Paste issues above. Once sent they move to In Flight." : ""}</p></div>
       ) : (
-        <div className="tbl-wrap">
+        <div><p className="scroll-hint">← swipe the table sideways to see every column →</p><div className="tbl-wrap">
           <table>
-            <thead><tr><th style={{ width: 32 }}></th><th style={{ minWidth: 150 }}>POC</th><th>CAMPAIGN</th><th>ISSUE</th>{tab === "snoozed" ? <><th>WHY IT IS SNOOZED</th><th>NUDGING RESUMES</th></> : <th>STATUS</th>}{tab !== "outreach" && <><th>{tab === "resolved" ? "CLOSED" : "LAST NUDGE"}</th><th>NUDGES</th></>}<th>ACTIONS</th></tr></thead>
+            <thead><tr><th style={{ width: 32 }}></th><th style={{ minWidth: 150 }}>POC</th><th>CAMPAIGN</th><th>ISSUE</th>{tab === "snoozed" ? <><th>WHY IT IS SNOOZED</th><th>NUDGING RESUMES</th></> : <th>STATUS</th>}{tab !== "outreach" && <th>{tab === "resolved" ? "CLOSED · NUDGES" : "NUDGES · LAST"}</th>}<th style={{ position: "sticky", right: 0, background: "var(--bg)", zIndex: 1 }}>ACTIONS</th></tr></thead>
             <tbody>
               {view.map((r) => (
                 <tr key={r.id}>
@@ -293,9 +327,8 @@ export default function Tracker() {
                   <td><Cell><div><LBadge palette={r.status.palette} label={r.status.label} />
                     {r.reply && r.status.key === "replied" && <div style={{ fontSize: 11, color: "#6b7280", marginTop: 4, fontStyle: "italic" }}>{INTENT[r.reply.intent] || "replied"}{r.reply.promised_date ? ` (${r.reply.promised_date})` : ""}: “{(r.reply.evidence || "").slice(0, 60)}”</div>}
                     {r.auto_followups === false && r.state === "open" && <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 3 }}>no automatic follow-ups</div>}</div></Cell></td>)}
-                  {tab !== "outreach" && <><td><Cell><DaysChip d={days(tab === "resolved" ? r.cleared_at : r.last_nudged_at)} /></Cell></td>
-                    <td><Cell><span style={{ fontSize: 13, fontWeight: 700, color: r.nudge_count >= 4 ? "#dc2626" : r.nudge_count >= 2 ? "#d97706" : r.nudge_count ? "#2563eb" : "#9ca3af" }}>{r.nudge_count || 0}</span></Cell></td></>}
-                  <td><Cell gap>
+                  {tab !== "outreach" && <td><Cell><div><span style={{ fontSize: 14, fontWeight: 700, color: r.nudge_count >= 4 ? "#dc2626" : r.nudge_count >= 2 ? "#d97706" : r.nudge_count ? "#2563eb" : "#9ca3af" }}>{r.nudge_count || 0}</span><span style={{ fontSize: 11, color: "#9ca3af" }}> nudge{r.nudge_count === 1 ? "" : "s"}</span><div><DaysChip d={days(tab === "resolved" ? r.cleared_at : r.last_nudged_at)} /></div></div></Cell></td>}
+                  <td style={{ position: "sticky", right: 0, background: "#fff", boxShadow: "-8px 0 8px -8px rgba(0,0,0,.12)" }}><Cell gap>
                     {tab !== "resolved" && <button className={`btn btn-sm ${tab === "outreach" ? "btn-primary" : "btn-orange"}`} disabled={busy} onClick={() => nudge([r])} title="Send a nudge to the owner right now">{tab === "outreach" ? "Send" : "🔁"}</button>}
                     {tab !== "resolved" && r.source === "manual" && <button className="btn btn-purple btn-sm" onClick={() => resolve([r.id])} title="Mark resolved">✓</button>}
                     {tab === "resolved" && r.source === "manual" && <button className="btn btn-sm" onClick={() => post({ action: "reopen", ids: [r.id] })}>↩ Reopen</button>}
@@ -306,20 +339,72 @@ export default function Tracker() {
               ))}
             </tbody>
           </table>
-        </div>
+        </div></div>
       )}
-      <p style={{ marginTop: 18, fontSize: 12, color: "#9ca3af" }}><Link href="/tracker-legacy">Open the old tracker</Link> · run log, replies and zero-cost decisions are under Admin → Automation</p>
+      <p style={{ marginTop: 18, fontSize: 12, color: "#9ca3af" }}><Link href="/tracker-legacy">Open the old tracker</Link> · the automation's run log is the 📋 button at the top right</p>
 
       {modal?.type === "snooze" && <SnoozeModal today={today} count={modal.ids.length} onClose={() => setModal(null)} onPick={async (until, note) => { const r = await post({ action: "snooze", ids: modal.ids, until, reason: note || undefined }); if (r) { show(`💤 Snoozed until ${until}`); setModal(null); setSel(new Set()); } }} />}
       {modal?.type === "reassign" && <ReassignModal count={modal.ids.length} busy={busy} onClose={() => setModal(null)} onDone={async (email, mode) => { let ok = true; for (const id of modal.ids) { const r = await post({ action: "reassign", ids: [id], email, mode }); if (!r) { ok = false; break; } } if (ok) { show("↗ Done"); setModal(null); setSel(new Set()); } }} />}
       {modal?.type === "edit" && <EditModal row={modal.row} categories={d.categories} busy={busy} onClose={() => setModal(null)} onSave={async (patch) => { const r = await post({ action: "edit", ids: [modal.row.id], ...patch }); if (r) { show("✅ Saved"); setModal(null); } }} />}
       {modal?.type === "reconcile" && <ReconcileModal categories={d.categories} onClose={() => setModal(null)} post={post} onDone={(msg) => { show(msg); setModal(null); }} />}
       {progress && <div className="modal-overlay"><div className="progress-modal"><h3 style={{ fontSize: 16, fontWeight: 700 }}>Sending…</h3><p style={{ fontSize: 13, color: "#6b7280", margin: "6px 0" }}>{Math.min(progress.done, progress.total)} of {progress.total} people</p><div className="progress-bar-track"><div className="progress-bar-fill" style={{ width: `${(progress.done / progress.total) * 100}%`, background: "#2563eb" }} /></div><p style={{ fontSize: 12, color: "#9ca3af" }}>Sent {progress.sent}{progress.failed ? ` · ${progress.failed} failed` : ""}. Please keep this page open.</p></div></div>}
+      {activity && <ActivityDrawer aux={aux} onClose={() => setActivity(false)} />}
       {drawer && <Drawer id={drawer} row={rows.find((r) => r.id === drawer)} categories={categories} today={today} onClose={() => setDrawer(null)} post={post} busy={busy} nudge={nudge} reload={load} openCampaign={(c) => { setDrawer(null); setCampDrawer(c); }} />}
       {campDrawer && <CampaignDrawer name={campDrawer} rows={rows.filter((r) => r.campaign_name === campDrawer)} categories={categories} onClose={() => setCampDrawer(null)} open={(id) => { setCampDrawer(null); setDrawer(id); }} />}
       {toast && <div className="toast" style={{ background: toast.type === "error" ? "#dc2626" : "#1e293b" }}>{toast.msg}</div>}
     </div>
   );
+}
+
+function ExcludedTab({ aux, busy, post }) {
+  if (!aux) return <div className="empty"><h3>Loading…</h3></div>;
+  const mine = (aux.zeroDecisions || []).filter((x) => x.decision === "exclude");
+  const forced = (aux.zeroDecisions || []).filter((x) => x.decision === "nudge");
+  const auto = aux.zeroStats?.autoExcluded || [];
+  return (<>
+    <h3 style={{ margin: "4px 0 8px", fontSize: 15 }}>Excluded by you ({mine.length})</h3>
+    <p style={{ fontSize: 12, color: "#9ca3af", marginBottom: 8 }}>Never nudged. If the DMS note on one of these changes later, it comes back to Review (not straight to a nudge) so nothing hides a real recurrence.</p>
+    <div style={{ marginBottom: 22 }}><div className="tbl-wrap"><table><thead><tr><th>CAMPAIGN</th><th>SERVICE</th><th>EXCLUDED</th><th></th></tr></thead><tbody>
+      {mine.map((x) => <tr key={x.id}><td><Cell><b style={{ fontSize: 13 }}>{x.campaign_name}</b></Cell></td><td><Cell>{x.service}</Cell></td><td><Cell><span style={{ fontSize: 12, color: "#6b7280" }}>{when(x.decided_at)}{x.reason ? ` · ${x.reason}` : ""}</span></Cell></td><td><Cell><button className="btn btn-sm" disabled={busy} onClick={() => post({ action: "zero_cost_undo", id: x.id }, "/api/nudges")}>↩ Undo</button></Cell></td></tr>)}
+      {!mine.length && <tr><td colSpan={4}><Cell><span style={{ color: "#9ca3af" }}>None yet.</span></Cell></td></tr>}
+    </tbody></table></div></div>
+    {forced.length > 0 && (<><h3 style={{ margin: "4px 0 8px", fontSize: 15 }}>Always nudged, even though the note mentions AI or Chiraiya ({forced.length})</h3>
+      <div style={{ marginBottom: 22 }}><div className="tbl-wrap"><table><thead><tr><th>CAMPAIGN</th><th>SERVICE</th><th></th></tr></thead><tbody>
+        {forced.map((x) => <tr key={x.id}><td><Cell><b style={{ fontSize: 13 }}>{x.campaign_name}</b></Cell></td><td><Cell>{x.service}</Cell></td><td><Cell><button className="btn btn-sm" disabled={busy} onClick={() => post({ action: "zero_cost_undo", id: x.id }, "/api/nudges")}>↩ Undo</button></Cell></td></tr>)}
+      </tbody></table></div></div></>)}
+    <h3 style={{ margin: "4px 0 8px", fontSize: 15 }}>Excluded automatically ({auto.length})</h3>
+    <p style={{ fontSize: 12, color: "#9ca3af", marginBottom: 8 }}>The internal note in DMS clearly says our own team did the work, so there is nothing to map. These fixed rules cost nothing to run and are re-checked on every DMS check.</p>
+    <div className="tbl-wrap"><table><thead><tr><th>CAMPAIGN</th><th>SERVICE</th><th>NOTE IN DMS</th></tr></thead><tbody>
+      {auto.map((x, i) => <tr key={i}><td><Cell><b style={{ fontSize: 13 }}>{x.campaign_name}</b></Cell></td><td><Cell>{x.service}</Cell></td><td><Cell><span className="issue-text">{x.note}</span></Cell></td></tr>)}
+      {!auto.length && <tr><td colSpan={3}><Cell><span style={{ color: "#9ca3af" }}>None at the last check.</span></Cell></td></tr>}
+    </tbody></table></div>
+  </>);
+}
+
+function ActivityDrawer({ aux, onClose }) {
+  const [t, setT] = useState("runs");
+  const runs = aux?.runs || []; const replies = aux?.replies || []; const msgs = aux?.messages || [];
+  return (<>
+    <div className="drawer-overlay" onClick={onClose} />
+    <div className="drawer" style={{ width: 640 }}>
+      <div className="drawer-header"><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><div><div className="poc-name" style={{ fontSize: 15 }}>Run log</div><div className="poc-email">What the automation did recently. Per-issue history is in each issue's Details.</div></div><button className="btn btn-sm" onClick={onClose}>✕</button></div>
+        <div className="tabs" style={{ marginTop: 12, marginBottom: 0 }}>{[["runs", `Runs (${runs.length})`], ["sent", `Sent (${msgs.length})`], ["replies", `Replies read (${replies.length})`]].map(([k, l]) => <button key={k} className={`tab-btn ${t === k ? "active" : ""}`} onClick={() => setT(k)}>{l}</button>)}</div></div>
+      <div className="drawer-body">
+        {!aux ? <p style={{ color: "#9ca3af" }}>Loading…</p> : t === "runs" ? (
+          runs.map((r) => (
+            <div key={r.id} style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 12, marginBottom: 10 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 4 }}><LBadge palette={r.ok === false ? "no_reply" : r.ok ? "active" : "sent"} label={r.ok === false ? "Failed" : r.ok ? "OK" : "Running"} /><b style={{ fontSize: 13 }}>{when(r.started_at)}</b><span style={{ fontSize: 12, color: "#6b7280" }}>{r.mode}</span></div>
+              <div style={{ fontSize: 12, color: "#374151" }}>Sent <b>{r.stats?.sent ?? 0}</b> of {r.stats?.planned ?? 0} planned · closed by DMS {r.stats?.cleared ?? 0} · new {r.stats?.inserted ?? 0}{r.stats?.skipped ? ` · skipped: ${r.stats.skipped}` : ""}{r.stats?.replyStats && !r.stats.replyStats.skipped ? ` · replies: ${r.stats.replyStats.newMessages ?? 0} new, cost $${(r.stats.replyStats.cost || 0).toFixed(3)}` : ""}</div>
+              {(r.stats?.notes || []).length > 0 && <div style={{ fontSize: 12, color: "#92400e", marginTop: 4 }}>⚠ {r.stats.notes.join(" · ")}</div>}{r.error && <div style={{ fontSize: 12, color: "#dc2626", marginTop: 4 }}>{r.error}</div>}
+            </div>))
+        ) : t === "sent" ? (
+          <div className="tbl-wrap"><table><thead><tr><th>WHEN</th><th>TO</th><th>KIND</th><th>STATUS</th></tr></thead><tbody>{msgs.map((m) => <tr key={m.id}><td><Cell><span style={{ fontSize: 12 }}>{when(m.sent_at || m.created_at)}</span></Cell></td><td><Cell><div className="poc-block"><div className="poc-name">{m.recipient_name || m.to_address}</div>{m.intended_to && <div className="poc-email">rehearsal for {m.intended_to}</div>}</div></Cell></td><td><Cell>{m.channel} · {m.kind}</Cell></td><td><Cell>{m.status}{m.mode !== "live" ? ` (${m.mode})` : ""}</Cell></td></tr>)}</tbody></table></div>
+        ) : (
+          <div className="tbl-wrap"><table><thead><tr><th>RECEIVED</th><th>FROM</th><th>READ AS</th><th>WHAT THEY SAID</th></tr></thead><tbody>{replies.map((r) => <tr key={r.id}><td><Cell><span style={{ fontSize: 12 }}>{when(r.messages_in?.received_at)}</span></Cell></td><td><Cell><span style={{ fontSize: 12 }}>{r.messages_in?.sender_address}</span></Cell></td><td><Cell><div><b style={{ fontSize: 12 }}>{INTENT[r.intent] || r.intent}</b>{r.promised_date ? <div style={{ fontSize: 11, color: "#6b7280" }}>{r.promised_date}</div> : null}</div></Cell></td><td><Cell><span className="issue-text">{r.evidence}</span></Cell></td></tr>)}</tbody></table></div>
+        )}
+      </div>
+    </div>
+  </>);
 }
 
 function ReviewTab({ d, rows, busy, post, setDrawer, setCampDrawer, categories }) {
@@ -330,11 +415,12 @@ function ReviewTab({ d, rows, busy, post, setDrawer, setCampDrawer, categories }
     {noOwner.length > 0 && (<>
       <h3 style={{ margin: "4px 0 10px", fontSize: 15 }}>Needs an owner ({noOwner.length})</h3>
       <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "10px 14px", marginBottom: 12, fontSize: 13, color: "#991b1b" }}>⚠ {noOwner.length} issue{noOwner.length === 1 ? " has" : "s have"} no owner: the campaign lead in DMS is deleted or missing. Nobody is nudged until you assign someone (or DMS gets a new lead).</div>
-      <div className="tbl-wrap" style={{ marginBottom: 22 }}><table><thead><tr><th>CAMPAIGN</th><th>ISSUE</th><th>ASSIGN TO (EMAIL)</th></tr></thead><tbody>
+      <div className="tbl-wrap" style={{ marginBottom: 22 }}><table><thead><tr><th>CAMPAIGN</th><th>ISSUE</th><th>ASSIGN TO (EMAIL) OR EXCLUDE</th></tr></thead><tbody>
         {noOwner.map((i) => (<tr key={i.id}>
           <td><Cell><span className="campaign-pill" onClick={() => setCampDrawer(i.campaign_name)}>{i.campaign_name} ↗</span><div><CategoryChip category={i.category} categories={categories} /></div></Cell></td>
           <td><Cell><div className="issue-text">{describeIssue(i)}</div></Cell></td>
-          <td><Cell gap><input style={{ maxWidth: 240 }} placeholder="name@wldd.in" value={owner[i.id] || ""} onChange={(e) => setOwner({ ...owner, [i.id]: e.target.value })} /><button className="btn btn-primary btn-sm" disabled={busy || !owner[i.id]} onClick={() => post({ action: "reassign", ids: [i.id], email: owner[i.id], mode: "reassign" })}>Assign</button></Cell></td>
+          <td><Cell gap><input style={{ maxWidth: 220 }} placeholder="name@wldd.in" value={owner[i.id] || ""} onChange={(e) => setOwner({ ...owner, [i.id]: e.target.value })} /><button className="btn btn-primary btn-sm" disabled={busy || !owner[i.id]} onClick={() => post({ action: "reassign", ids: [i.id], email: owner[i.id], mode: "reassign" })}>Assign</button>
+            {i.category === "zero_cost_services" && <button className="btn btn-red btn-sm" disabled={busy} title="Never nudge this campaign and service, no owner needed" onClick={() => confirm(`Exclude ${i.campaign_name} (${i.detail?.service || "service"}) for good? It will never be nudged.`) && post({ action: "zero_cost_exclude", campaign_id: i.campaign_id, campaign_name: i.campaign_name, service: i.detail?.service }, "/api/nudges")}>🚫 Exclude for good</button>}</Cell></td>
         </tr>))}
       </tbody></table></div></>)}
     <h3 style={{ margin: "4px 0 10px", fontSize: 15 }}>To check ({toCheck.length})</h3>

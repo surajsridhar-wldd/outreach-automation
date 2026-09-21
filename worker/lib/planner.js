@@ -10,7 +10,7 @@
 //    (and gains) priority.
 
 import {
-  istDate, workingDaysAfter, isNudgeDay, inMonthEndWindow, isFinalNoticeDay, weeklySlot,
+  istDate, addDays, dow, workingDaysAfter, isNudgeDay, inMonthEndWindow, isFinalNoticeDay, weeklySlot,
 } from './time.js';
 
 export const CATEGORY = {
@@ -88,7 +88,10 @@ export function evaluateIssue(issue, ctx) {
     // Due once per weekly slot (Wednesday), and stays due until it is actually sent.
     // An issue that first appeared after this week's slot waits for the next one, so a
     // brand-new closing/proposal is never followed up a day or two after its first notice.
-    if (lastDate && lastDate >= slot) return NOT_ELIGIBLE('weekly_already_sent');
+    // Once per WEEK: a nudge sent any day of this Monday-Friday week (the Wednesday slot, or a manual / first-round send earlier
+    // in the week) counts, so a proposal or closing is never reminded twice within days.
+    const weekStart = addDays(slot, -((dow(slot) + 6) % 7));
+    if (lastDate && lastDate >= weekStart) return NOT_ELIGIBLE('weekly_already_sent');
     if (today < slot) return NOT_ELIGIBLE('before_weekly_slot');
     if (issue.firstSeenAt && istDate(issue.firstSeenAt) > slot) return NOT_ELIGIBLE('waiting_for_weekly_slot');
     return { eligible: true, nextN };
