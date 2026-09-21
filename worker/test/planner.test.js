@@ -115,6 +115,18 @@ test('weekly items: once per Wednesday slot, stay due until sent, new items wait
   assert.equal(planRun({ now: at('2026-10-14'), issues: [fresh], people }).messages.length, 1);
 });
 
+test('weekly items nudged earlier in the same week (first round, manual send) are not reminded again on Wednesday', () => {
+  const people = { p001: { enteredAt: 'x' } };
+  const monday = makeIssue(1, CATEGORY.PROPOSAL, { nudgeCount: 1, lastNudgedAt: at('2026-09-21').toISOString(), firstSeenAt: '2026-09-01T00:00:00Z', ownerIds: ['p001'] });
+  assert.equal(planRun({ now: at('2026-09-23'), issues: [monday], people }).messages.length, 0, 'sent Monday: this week\'s reminder is done');
+  assert.equal(planRun({ now: at('2026-09-30'), issues: [monday], people }).messages.length, 1, 'due again the following Wednesday');
+  const tuesday = makeIssue(2, CATEGORY.CLOSING, { nudgeCount: 1, lastNudgedAt: at('2026-09-22').toISOString(), firstSeenAt: '2026-09-01T00:00:00Z', ownerIds: ['p001'] });
+  assert.equal(planRun({ now: at('2026-09-23'), issues: [tuesday], people }).messages.length, 0);
+  // Mon/Wed/Fri categories keep their own 2-working-day spacing
+  const shot = makeIssue(3, CATEGORY.SCREENSHOT, { nudgeCount: 1, lastNudgedAt: at('2026-09-21').toISOString(), ownerIds: ['p001'] });
+  assert.equal(planRun({ now: at('2026-09-23'), issues: [shot], people }).messages.length, 1);
+});
+
 test('weekly items join the same message as Mon/Wed/Fri items for the same person on Wednesday', () => {
   const a = makeIssue(1, CATEGORY.SCREENSHOT, { ownerIds: ['p001'] });
   const b = makeIssue(2, CATEGORY.CLOSING, { ownerIds: ['p001'], firstSeenAt: '2026-09-01T00:00:00Z' });
