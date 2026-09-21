@@ -57,7 +57,7 @@ test('holds follow the promised date but are capped per category', () => {
 
 test('loop-in adds a co-owner; owner redirect reassigns; unmatched or ambiguous goes to review', () => {
   const co = effectsFor({ item_no: 1, intent: 'loop_in', target_person: 'Ravi Kumar', evidence: 'add Ravi', confidence: 0.9 }, ctx());
-  assert.deepEqual(co.effects, [{ type: 'owner', issueId: 'i1', dmsUserId: 'u9', role: 'co_owner', replaces: null, leadAtCreation: 'u1' }]);
+  assert.deepEqual(co.effects, [{ type: 'owner', issueId: 'i1', dmsUserId: 'u9', role: 'co_owner', replaces: null, leadAtCreation: 'u1', createPerson: null }]);
   const re = effectsFor({ item_no: 1, intent: 'redirect', target_person: 'Ravi Kumar', evidence: 'Ravi handles this', confidence: 0.9 }, ctx());
   assert.equal(re.effects[0].role, 'reassigned_to'); assert.equal(re.effects[0].replaces, 'u1');
   const third = effectsFor({ item_no: 1, intent: 'redirect', target_person: 'Ravi Kumar', evidence: 'x', confidence: 0.9 }, ctx({ fromOwner: false, senderId: 'm1' }));
