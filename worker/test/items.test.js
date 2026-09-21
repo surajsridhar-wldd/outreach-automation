@@ -69,3 +69,14 @@ test('scenario: a screenshot is chased three times and approved; the campaign ge
   assert.deepEqual(p.issueUpdate, { nudge_count: 0, last_nudged_at: null });
   assert.equal(p.insert[0].nudge_count, 0);
 });
+
+test('a send that happened before the real items were known leaves a placeholder; the real items inherit its history (nothing resets)', () => {
+  const p = planItemSync({
+    issue: issue({ nudge_count: 2, last_nudged_at: '2026-09-21T08:00:00.000Z' }),
+    wanted: [{ key: 'inv1', at: '2026-08-01T00:00:00.000Z' }, { key: 'inv2', at: '2026-09-22T00:00:00.000Z' }],
+    existing: [{ id: 'm1', item_key: 'main', nudge_count: 2, last_nudged_at: '2026-09-21T08:00:00.000Z' }], nowIso: NOW,
+  });
+  assert.deepEqual(p.clear, ['m1']);
+  assert.deepEqual(p.insert.map((r) => [r.item_key, r.nudge_count]), [['inv1', 2], ['inv2', 0]]);
+  assert.equal(p.releaseHold, false);
+});

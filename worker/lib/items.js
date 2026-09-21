@@ -20,15 +20,19 @@ export function planItemSync({ issue, wanted, existing, nowIso }) {
   const wantedKeys = new Set(wanted.map((w) => w.key));
   const existingKeys = new Set(existing.map((e) => e.item_key));
   const clear = existing.filter((e) => !wantedKeys.has(e.item_key)).map((e) => e.id);
-  const introducing = existing.length === 0;            // first time this issue is tracked per item (migration or brand-new issue)
+  // A lone placeholder 'main' item (created by a send before the individual items were known) is replaced by the real
+  // items, which inherit its history exactly like a first-time tracking.
+  const placeholder = existing.length === 1 && existing[0].item_key === MAIN && !wantedKeys.has(MAIN);
+  const introducing = existing.length === 0 || placeholder;
+  const history = placeholder ? { nudge_count: existing[0].nudge_count || 0, last_nudged_at: existing[0].last_nudged_at } : { nudge_count: issue.nudge_count || 0, last_nudged_at: issue.last_nudged_at };
   const insert = [];
   for (const w of wanted) {
     if (existingKeys.has(w.key)) continue;
     let count = 0; let last = null;
-    if (introducing && (issue.nudge_count || 0) > 0) {
+    if (introducing && history.nudge_count > 0) {
       // Items that already existed when the issue was last nudged inherit its history; items created after do not.
-      const createdAfterLastNudge = w.at && issue.last_nudged_at && ms(w.at) > ms(issue.last_nudged_at);
-      if (!createdAfterLastNudge) { count = issue.nudge_count; last = issue.last_nudged_at; }
+      const createdAfterLastNudge = w.at && history.last_nudged_at && ms(w.at) > ms(history.last_nudged_at);
+      if (!createdAfterLastNudge) { count = history.nudge_count; last = history.last_nudged_at; }
     }
     insert.push({ issue_id: issue.id, item_key: w.key, item_created_at: w.at || null, first_seen_at: nowIso, nudge_count: count, last_nudged_at: last });
   }
