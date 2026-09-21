@@ -132,7 +132,9 @@ test('email: one numbered line per campaign, each bullet says what to do, one sh
 
 test('email: zero-cost service line, follow-up, final and month-end wording; "done" claims are called out', () => {
   const zc = buildEmail([{ issueId: 'z1', category: CATEGORY.ZERO_COST, campaign_name: 'Rahul Joshi x Hope Rescue', item_count: 1, detail: { service: 'ORM', internal_note: 'used Prayag tiwari for comment seeding!' }, nextN: 1 }], { name: 'X', senderName: 'S', kind: 'first' }).body;
-  assert.match(zc, /ORM shows zero deliverables and zero internal cost\. If it was executed, please coordinate with the Inventory team to map it/);
+  assert.match(zc, /ORM shows zero deliverables and zero internal cost\. If it was executed, please map the right vendors and deliverables: you can reach the inventory team at inventory@wldd\.in/);
+  assert.match(buildEmail([{ issueId: 'p1', category: CATEGORY.PROPOSAL, campaign_name: 'P', item_count: 1, detail: { pending_days: 20 }, nextN: 1 }], { name: 'X', senderName: 'S', kind: 'first' }).body, /If the campaign is not going ahead, please mark it Cancelled/);
+  assert.ok(!/client is inactive/.test(zc));
   assert.match(zc, /\(Internal note: used Prayag tiwari for comment seeding!\)/);
   assert.match(zc, /Services: unmapped services misstate campaign margins/);
   const inv = [{ issueId: 'i1', category: CATEGORY.INVOICE, campaign_name: 'Alpha', item_count: 1, detail: {}, nextN: 2, claimedDone: true }];
@@ -179,4 +181,17 @@ test('threading self-test sends the second message inside the first thread', asy
 test('slack self-test reports the outcome', async () => {
   assert.equal((await slackSelfTest({ senders: { slack: async () => ({ ok: true }) }, ownerEmail: 'o@wldd.in', runId: 'r' })).ok, true);
   assert.equal((await slackSelfTest({ senders: { slack: async () => ({ ok: false, error: 'no_slack_user' }) }, ownerEmail: 'o@wldd.in', runId: 'r' })).error, 'no_slack_user');
+});
+
+test('email: a follow-up that also carries brand-new items says so, and marks the new ones', () => {
+  const items = [
+    { issueId: 'a', category: CATEGORY.SCREENSHOT, campaign_name: 'Old One', item_count: 1, detail: {}, nextN: 3 },
+    { issueId: 'b', category: CATEGORY.INVOICE, campaign_name: 'New One', item_count: 1, detail: {}, nextN: 1 },
+  ];
+  const { body } = buildEmail(items, { name: 'X', senderName: 'S', kind: 'followup', hasInvoice: true });
+  assert.match(body, /Following up on my earlier email, and adding some new items \(marked new\)/);
+  assert.match(body, /1 vendor invoice: please review the proof of work and approve or reject \(new\)/);
+  assert.ok(!/1 screenshot: please approve or reject \(new\)/.test(body));
+  const plain = buildEmail(items.slice(0, 1), { name: 'X', senderName: 'S', kind: 'followup' }).body;
+  assert.match(plain, /^Hi X,\n\nFollowing up on my earlier email\. These items are still pending/);
 });

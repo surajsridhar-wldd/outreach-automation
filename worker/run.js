@@ -140,7 +140,7 @@ export async function main(env = process.env) {
       recentRunCounts: recentCounts,
       settings: {
         senderName: senderRow.name, senderEmail: senderRow.gmail_address, redirectTo: settings.rehearsal_redirect_to,
-        allowlist: settings.canary_allowlist || [], inventoryCc: settings.inventory_cc || 'inventory@wldd.in', sendWindow: settings.send_window, rehearsalMax: settings.rehearsal_max,
+        allowlist: settings.canary_allowlist || [], sendWindow: settings.send_window, rehearsalMax: settings.rehearsal_max,
       },
     });
     if (exec.rampDone) await S.setSetting(db, 'ramp_active', false);

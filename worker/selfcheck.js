@@ -99,6 +99,7 @@ export async function main(env = process.env) {
 
 async function cleanup(db) {
   await db.from('review_items').delete().like('note', `${P}%`);
+  await db.from('review_items').delete().like('note', 'Unconfirmed send to selfcheck%');
   await db.from('messages_out').delete().like('recipient_dms_user_id', `${P}%`);
   await db.from('issues').delete().like('campaign_id', `${P}%`);
   await db.from('dms_people').delete().like('dms_user_id', `${P}%`);

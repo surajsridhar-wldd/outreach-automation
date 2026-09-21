@@ -35,12 +35,12 @@ export function buildManualPlan({ issues, overridesByIssue = new Map(), now, set
 }
 
 /** Loads what the executor needs, builds the plan and sends. `store`/`senders` are injected (Supabase + Gmail in production). */
-export async function sendNow({ issues, overrides = [], people, store, senders, now = new Date(), settings = {} }) {
+export async function sendNow({ issues, overrides = [], people, store, senders, now = new Date(), settings = {}, channel = 'email' }) {
   const overridesByIssue = new Map();
   for (const o of overrides) overridesByIssue.set(o.issue_id, [...(overridesByIssue.get(o.issue_id) || []), o]);
   const { plan, skipped } = buildManualPlan({ issues, overridesByIssue, now, settings });
   const stats = await executePlan({
-    plan, mode: 'live', manual: true, now, runId: null, store, senders,
+    plan, mode: 'live', manual: true, channel, now, runId: null, store, senders,
     issuesById: new Map(issues.map((i) => [i.id, i])),
     people: new Map(people.map((p) => [p.dms_user_id, p])),
     settings,
