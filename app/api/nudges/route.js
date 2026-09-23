@@ -18,7 +18,7 @@ export async function GET() {
     const [settings, runs, needsOwner, review, cats, people, weekly, messages, replies, open, zeroDecisions, zeroIssues] = await Promise.all([
       q(db.from("settings").select("key,value")),
       q(db.from("runs").select("id,mode,started_at,finished_at,ok,stats,error").order("started_at", { ascending: false }).limit(8)),
-      q(db.from("issues").select("id,category,campaign_name,owner_dms_user_id,owner_state,item_count,first_seen_at").eq("state", "open").neq("owner_state", "active").order("first_seen_at")),
+      q(db.from("issues").select("id,campaign_id,category,campaign_name,owner_dms_user_id,owner_state,item_count,first_seen_at").eq("state", "open").neq("owner_state", "active").order("first_seen_at")),
       q(db.from("review_items").select("id,kind,note,created_at,issue_id,payload,issues(campaign_name,category)").eq("status", "open").order("created_at", { ascending: false }).limit(200)),
       q(db.from("nudge_category_stats").select("*")),
       q(db.from("nudge_person_stats").select("*").gt("issues_total", 0).order("open_after_3_nudges", { ascending: false }).order("false_done_claims", { ascending: false }).order("open_issues", { ascending: false }).limit(25)),
@@ -88,5 +88,5 @@ export async function POST(req) {
     if (error) return Response.json({ error: error.message }, { status: 500 });
     return Response.json({ ok: true });
   }
-  return Response.json({ error: "Unknown action" }, { status: 400 });
+  return Response.json({ error: `Unknown action: ${JSON.stringify(body.action)}` }, { status: 400 });
 }
