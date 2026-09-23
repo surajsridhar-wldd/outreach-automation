@@ -35,7 +35,7 @@ export async function GET() {
   const a = await admin(); if (a.res) return a.res;
   try {
     const since = new Date(Date.now() - 60 * 86400e3).toISOString();
-    const issues = await all(() => db.from("issues").select("id,source,category,campaign_name,title,issue_text,state,owner_dms_user_id,owner_state,item_count,nudge_count,last_nudged_at,hold_until,hold_reason,claimed_done_at,false_done_claims,auto_followups,first_seen_at,cleared_at,clear_reason,resolved_by,notes,detail,legacy_record_id")
+    const issues = await all(() => db.from("issues").select("id,campaign_id,source,category,campaign_name,title,issue_text,state,owner_dms_user_id,owner_state,item_count,nudge_count,last_nudged_at,hold_until,hold_reason,claimed_done_at,false_done_claims,auto_followups,first_seen_at,cleared_at,clear_reason,resolved_by,notes,detail,legacy_record_id")
       .or(`state.in.(draft,open),cleared_at.gte.${since}`).order("first_seen_at", { ascending: false }));
     const { data: redirRows } = await db.from("owner_redirects").select("from_dms_user_id,to_dms_user_id");
     const redirects = Object.fromEntries((redirRows || []).map((r) => [r.from_dms_user_id, r.to_dms_user_id]));
