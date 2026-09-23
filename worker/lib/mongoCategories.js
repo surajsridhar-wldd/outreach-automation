@@ -57,10 +57,28 @@ export function creatorSubmissionPipeline() {
   ];
 }
 
-/** Screenshot approvals: only an explicit 0 is pending (null/missing/other values are not). */
+/**
+ * Screenshot approvals: only an explicit 0 is pending (null/missing/other values are not) — AND
+ * only if the submission doesn't already have an approved batch in `screenshot_batches`.
+ *
+ * `creator_submissions.latest_screenshot_status` sometimes never gets synced back to 0→done once
+ * the actual review happens in `screenshot_batches` (status 1 = approved there). Found 2026-09-23:
+ * "Amazonian Dad x Wldd" had latest_screenshot_status: 0 while its screenshot_batches record was
+ * status: 1, approved_by set, approved back in June — a real screenshot, already approved, that
+ * would otherwise nudge forever since its status field never flips on its own. Cross-checked
+ * against the owner's live DMS "pending screenshots" export: every campaign/count matched except
+ * this one false positive, confirming the owner's own count already excludes this case.
+ */
 export function screenshotApprovalPipeline() {
   return [
     { $match: { latest_screenshot_status: 0 } },
+    { $lookup: {
+      from: 'screenshot_batches',
+      let: { subId: '$submission_id' },
+      pipeline: [{ $match: { $expr: { $and: [{ $eq: ['$submission_id', '$$subId'] }, { $eq: ['$status', 1] }] } } }, { $limit: 1 }],
+      as: 'approvedBatch',
+    } },
+    { $match: { 'approvedBatch.0': { $exists: false } } },
     { $group: { _id: '$campaign_id', item_count: { $sum: 1 }, items: { $push: { key: '$submission_id', at: null } } } },
   ];
 }
