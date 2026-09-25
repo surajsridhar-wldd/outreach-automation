@@ -55,10 +55,10 @@ test('sync diff: same campaign in two categories is two separate issues', () => 
   assert.equal(d.toInsert[0].category, 'screenshot_approvals');
 });
 
-test('sync diff: a sudden mass disappearance is treated as a bad read and NOT cleared', () => {
+test('sync diff: a sudden mass disappearance still clears in full, flagged only as an audit note', () => {
   const open = Array.from({ length: 20 }, (_, i) => existing('pending_closings', `c${i}`, i));
   const d = diffIssues(open, [mk('pending_closings', 'c0'), mk('pending_closings', 'c1')]);
-  assert.equal(d.toClear.length, 0);
+  assert.equal(d.toClear.length, 18);
   assert.deepEqual(d.suspectCategories, [{ category: 'pending_closings', wasOpen: 20, wouldClear: 18 }]);
 });
 

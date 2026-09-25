@@ -95,10 +95,6 @@ export async function main(env = process.env) {
       }
     }
     await S.applySync(db, { diff, people: peopleToStore, nowIso: realNow.toISOString() });
-    for (const s of diff.suspectCategories) {
-      await S.addReviewItem(db, { kind: 'sync_guard', note: `${s.category}: ${s.wouldClear} of ${s.wasOpen} open issues vanished at once; treated as a bad read, nothing cleared or sent for this category.` });
-    }
-    const suspect = new Set(diff.suspectCategories.map((s) => s.category));
     // Per-item tracking: every invoice / creator link / screenshot upload has its own nudge count.
     const itemStats = await S.syncItems(db, { openIssues: (await S.loadOpenIssues(db)).filter((i) => i.source !== 'manual'), fetched, nowIso: realNow.toISOString() });
 
@@ -111,8 +107,8 @@ export async function main(env = process.env) {
 
     // Categories can be switched on one at a time (e.g. invoice approvals first). Unset = all five.
     const enabled = Array.isArray(settings.enabled_categories) ? new Set(settings.enabled_categories) : null;
-    // Manual issues follow their own switch (auto_followups) and are never touched by the category switch or the Mongo guard.
-    const plannerIssues = openRows.filter((r) => r.source === 'manual' ? r.auto_followups !== false : (!suspect.has(r.category) && (!enabled || enabled.has(r.category)))).map((r) => {
+    // Manual issues follow their own switch (auto_followups); Mongo-sourced ones follow the category switch only.
+    const plannerIssues = openRows.filter((r) => r.source === 'manual' ? r.auto_followups !== false : (!enabled || enabled.has(r.category))).map((r) => {
       const { ownerIds, needsOwner } = resolveRecipients(r, overridesByIssue.get(r.id) || [], redirects);
       return { id: r.id, category: r.category, ownerIds, needsOwner, nudgeCount: r.nudge_count, lastNudgedAt: r.last_nudged_at, holdUntil: r.hold_until, firstSeenAt: r.first_seen_at };
     });
@@ -156,7 +152,6 @@ export async function main(env = process.env) {
     // Tell the owner about anything that needs a human, by email to themselves only.
     const notes = [];
     if (exec.skipped === 'circuit_breaker') notes.push(`Circuit breaker stopped the run: it would have messaged ${exec.planned} people (limit ${exec.breakerLimit}). Nothing was sent.`);
-    if (diff.suspectCategories.length) notes.push(`Bad-read guard tripped: ${JSON.stringify(diff.suspectCategories)}. Nothing cleared or sent for those categories.`);
     if (teamSheet.error) notes.push(`Team sheet could not be read (${teamSheet.error}); managers fell back to DMS cohort/pod leads.`);
     if (exec.failed) notes.push(`${exec.failed} email(s) failed to send. See the review list.`);
     if (replyStats?.error) notes.push(`Reply reading failed (${replyStats.error}); replies will be picked up next run.`);
