@@ -1,10 +1,11 @@
 // Bring the `issues` table in line with what Mongo says right now.
 //
-// diffIssues is pure and tested. It also protects against a bad read: if a category suddenly
-// loses most of its open issues in one go (broken query, partial outage), those issues are NOT
-// cleared and nothing is sent for that category this run; the run reports it instead. Wrongly
-// nudging someone about a fixed issue, or resetting the ladder on everything, is worse than
-// waiting one run.
+// diffIssues is pure and tested. A category that loses most of its open issues in one go is
+// still cleared in full (Mongo is the sole source of truth: not flagged there means not
+// pending anywhere) - `suspectCategories` is kept only as a same-run audit note for anything
+// unusually large, never as a block on clearing or a manual-approval gate (owner decision,
+// 2026-09-25: after repeatedly confirming these mass-clears were correct, the guard was
+// changed from blocking to informational-only).
 
 const keyOf = (x) => `${x.category}::${x.campaign_id}`;
 
@@ -32,7 +33,6 @@ export function diffIssues(existingOpen, fetched, { guardMinOpen = 10, guardDrop
     const gone = rows.filter((r) => !fetchedKeys.has(keyOf(r)));
     if (rows.length >= guardMinOpen && gone.length / rows.length > guardDropRatio) {
       suspectCategories.push({ category, wasOpen: rows.length, wouldClear: gone.length });
-      continue;
     }
     toClear.push(...gone);
   }
