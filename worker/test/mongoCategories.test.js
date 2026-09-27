@@ -14,15 +14,19 @@ test('cutoffs reproduce the boundaries verified against the owner CSVs on 2026-0
   assert.equal(c.proposalCreated.toISOString(), '2026-09-04T23:59:59.999Z'); // in Proposal > 14 days (>= 15)
 });
 
-test('creator submissions require a real submitted_at date (drops 8 legacy rows)', () => {
-  const match = creatorSubmissionPipeline()[0].$match;
+test('creator submissions require a real submitted_at date before the pending cutoff (drops 8 legacy rows)', () => {
+  const cutoff = new Date('2026-09-19T06:30:00.000Z');
+  const match = creatorSubmissionPipeline(cutoff)[0].$match;
   assert.equal(match.approved, 0);
-  assert.deepEqual(match.submitted_at, { $type: 'date' });
+  assert.deepEqual(match.submitted_at, { $type: 'date', $lt: cutoff });
   assert.equal(match.url.$regex, '\\S');
 });
 
-test('screenshot approvals need an explicit 0; invoices are -2 starting from the small invoice set', () => {
-  assert.deepEqual(screenshotApprovalPipeline()[0], { $match: { latest_screenshot_status: 0 } });
+test('screenshot approvals need an explicit 0, and a pending-since before the cutoff; invoices are -2 starting from the small invoice set', () => {
+  const cutoff = new Date('2026-09-19T06:30:00.000Z');
+  const pipeline = screenshotApprovalPipeline(cutoff);
+  assert.deepEqual(pipeline[0], { $match: { latest_screenshot_status: 0 } });
+  assert.deepEqual(pipeline.at(-2), { $match: { pendingSince: { $lt: cutoff } } });
   assert.deepEqual(invoiceApprovalPipeline()[0], { $match: { invoice_status: -2 } });
 });
 

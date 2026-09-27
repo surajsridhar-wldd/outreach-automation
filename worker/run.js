@@ -75,7 +75,8 @@ export async function main(env = process.env) {
     // 1. Read Mongo (read-only) and mirror it into `issues`.
     await mongo.connect();
     const zeroDecisions = await S.loadZeroCostDecisions(db);
-    const { issues: fetched, orphans, manualVerify, zeroExcluded } = await fetchOpenIssues(mongo.db('test'), realNow, { log: console.log, zeroDecisions });
+    const holidaysForFetch = await S.loadHolidays(db);
+    const { issues: fetched, orphans, manualVerify, zeroExcluded } = await fetchOpenIssues(mongo.db('test'), realNow, { log: console.log, zeroDecisions, holidays: holidaysForFetch });
     let zeroRaised = 0;
     for (const z of manualVerify || []) if (await S.addManualVerifyOnce(db, z)) zeroRaised++;
     // Only Mongo-detected issues are mirrored from / cleared by Mongo. Issues added by hand are resolved by a person.
@@ -99,9 +100,10 @@ export async function main(env = process.env) {
     const itemStats = await S.syncItems(db, { openIssues: (await S.loadOpenIssues(db)).filter((i) => i.source !== 'manual'), fetched, nowIso: realNow.toISOString() });
 
     // 2. Build the planner input from the freshly synced state.
-    const [openRows, overrides, peopleRows, holidays, recentCounts, redirects] = await Promise.all([
-      S.loadOpenIssues(db), S.loadOverrides(db), S.loadPeople(db), S.loadHolidays(db), S.recentSentCounts(db), S.loadRedirects(db),
+    const [openRows, overrides, peopleRows, recentCounts, redirects] = await Promise.all([
+      S.loadOpenIssues(db), S.loadOverrides(db), S.loadPeople(db), S.recentSentCounts(db), S.loadRedirects(db),
     ]);
+    const holidays = holidaysForFetch;
     const overridesByIssue = new Map();
     for (const o of overrides) overridesByIssue.set(o.issue_id, [...(overridesByIssue.get(o.issue_id) || []), o]);
 
