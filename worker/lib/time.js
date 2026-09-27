@@ -48,6 +48,12 @@ export function nextWorkingDay(dateStr, holidays = new Set()) {
   return d;
 }
 
+export function prevWorkingDay(dateStr, holidays = new Set()) {
+  let d = addDays(dateStr, -1);
+  while (!isWorkingDay(d, holidays)) d = addDays(d, -1);
+  return d;
+}
+
 /** Working days in the half-open range (from, to]: strictly after `from`, up to and including `to`. */
 export function workingDaysAfter(from, to, holidays = new Set()) {
   let n = 0;
@@ -110,4 +116,18 @@ export function inSendWindow(instant, holidays = new Set(), startHour = 11, endH
   if (!isWorkingDay(istDate(instant), holidays)) return false;
   const { hour } = istClock(instant);
   return hour >= startHour && hour < endHour;
+}
+
+/**
+ * Noon IST of the previous working day. A creator submission / screenshot review that only
+ * became pending at or after this moment is not yet old enough to flag on today's run - it is
+ * simply not counted as pending at all this cycle, and is picked up normally (no special-casing
+ * needed) once a later sync sees it before that run's own cutoff. This is what makes a Monday
+ * run's cutoff "Friday noon" (previous working day skips the weekend) and a Wednesday run's
+ * cutoff "Tuesday noon", and shifts the same way around a holiday.
+ */
+export function pendingCutoff(now = new Date(), holidays = new Set()) {
+  const prev = prevWorkingDay(istDate(now), holidays);
+  // Noon IST = 06:30 UTC (IST is UTC+5:30, no DST).
+  return new Date(`${prev}T06:30:00.000Z`);
 }

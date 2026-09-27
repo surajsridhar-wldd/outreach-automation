@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   istDate, workingDaysAfter, isNudgeDay, inMonthEndWindow, isFinalNoticeDay, weeklySlot,
-  inSendWindow, workingDaysOfMonth, nextWorkingDay, addDays, daysBetween,
+  inSendWindow, workingDaysOfMonth, nextWorkingDay, prevWorkingDay, pendingCutoff, addDays, daysBetween,
 } from '../lib/time.js';
 
 const none = new Set();
@@ -72,5 +72,21 @@ test('small helpers', () => {
   assert.equal(addDays('2026-10-31', 1), '2026-11-01');
   assert.equal(daysBetween('2026-09-12', '2026-09-19'), 7);
   assert.equal(nextWorkingDay('2026-10-09', none), '2026-10-12');
+  assert.equal(prevWorkingDay('2026-10-05', none), '2026-10-02'); // Mon -> the Friday before
   assert.equal(workingDaysOfMonth('2026-10-15', none).length, 22);
+});
+
+test('pendingCutoff: noon IST of the previous working day, shifting for weekends and holidays', () => {
+  // Monday's run (Oct 5, 11:00 IST): a submission is old enough only if it arrived before
+  // noon IST the previous Friday (Oct 2) - anything from Friday afternoon through the whole
+  // weekend and Monday morning is not yet counted as pending at all this cycle.
+  assert.equal(pendingCutoff(new Date('2026-10-05T05:30:00Z'), none).toISOString(), '2026-10-02T06:30:00.000Z');
+  // Wednesday's run (Oct 7, 11:00 IST): cutoff is Tuesday (Oct 6) noon IST.
+  assert.equal(pendingCutoff(new Date('2026-10-07T05:30:00Z'), none).toISOString(), '2026-10-06T06:30:00.000Z');
+  // Friday's run (Oct 9, 11:00 IST): cutoff is Thursday (Oct 8) noon IST.
+  assert.equal(pendingCutoff(new Date('2026-10-09T05:30:00Z'), none).toISOString(), '2026-10-08T06:30:00.000Z');
+  // If Monday (Oct 5) is a holiday and the run shifts to Tuesday (Oct 6), the cutoff skips the
+  // holiday too and lands on the working day before it - the previous Friday (Oct 2) noon.
+  const monHoliday = new Set(['2026-10-05']);
+  assert.equal(pendingCutoff(new Date('2026-10-06T05:30:00Z'), monHoliday).toISOString(), '2026-10-02T06:30:00.000Z');
 });

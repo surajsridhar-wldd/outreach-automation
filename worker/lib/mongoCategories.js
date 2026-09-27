@@ -8,7 +8,7 @@
 // Nothing here writes to Mongo. Owner = campaigns.campaign_lead only (co_campaign_lead is
 // deliberately ignored).
 
-import { addDays, daysBetween, utcDate } from './time.js';
+import { addDays, daysBetween, utcDate, pendingCutoff } from './time.js';
 import { CATEGORY } from './planner.js';
 import { zeroCostPipeline, classifyZeroCost, ZERO_COST_SERVICES } from './zeroCost.js';
 
@@ -49,10 +49,16 @@ export function invoiceApprovalPipeline() {
 /**
  * Submitted creator links awaiting approval. `submitted_at` must be a real date: legacy rows that
  * carry a link but were never formally submitted are not pending work (8 such rows at check time).
+ *
+ * `cutoff` (noon IST of the previous working day, see time.js `pendingCutoff`): a submission that
+ * only arrived at or after this moment is not counted as pending at all this run - not held in any
+ * kind of snooze, just genuinely not pending yet from this run's point of view. A later run whose
+ * own cutoff has moved past it picks it up as a normal new item, same as anything else (owner
+ * decision, 2026-09-27: don't flag someone minutes after they submitted, right before a nudge run).
  */
-export function creatorSubmissionPipeline() {
+export function creatorSubmissionPipeline(cutoff) {
   return [
-    { $match: { approved: 0, url: { $type: 'string', $regex: '\\S' }, submitted_at: { $type: 'date' } } },
+    { $match: { approved: 0, url: { $type: 'string', $regex: '\\S' }, submitted_at: { $type: 'date', $lt: cutoff } } },
     { $group: { _id: '$campaign_id', item_count: { $sum: 1 }, items: { $push: { key: '$submission_id', at: '$submitted_at' } } } },
   ];
 }
@@ -68,18 +74,25 @@ export function creatorSubmissionPipeline() {
  * would otherwise nudge forever since its status field never flips on its own. Cross-checked
  * against the owner's live DMS "pending screenshots" export: every campaign/count matched except
  * this one false positive, confirming the owner's own count already excludes this case.
+ *
+ * `cutoff` (noon IST of the previous working day, see time.js `pendingCutoff` and the identical
+ * note on `creatorSubmissionPipeline`): "pending since" is the most recent screenshot_batches
+ * record for the submission (the batch is created exactly when a screenshot goes up for review),
+ * falling back to the submission's own updatedAt if it has no batch on file for some reason.
  */
-export function screenshotApprovalPipeline() {
+export function screenshotApprovalPipeline(cutoff) {
   return [
     { $match: { latest_screenshot_status: 0 } },
     { $lookup: {
       from: 'screenshot_batches',
       let: { subId: '$submission_id' },
-      pipeline: [{ $match: { $expr: { $and: [{ $eq: ['$submission_id', '$$subId'] }, { $eq: ['$status', 1] }] } } }, { $limit: 1 }],
-      as: 'approvedBatch',
+      pipeline: [{ $match: { $expr: { $eq: ['$submission_id', '$$subId'] } } }, { $sort: { createdAt: -1 } }],
+      as: 'batches',
     } },
-    { $match: { 'approvedBatch.0': { $exists: false } } },
-    { $group: { _id: '$campaign_id', item_count: { $sum: 1 }, items: { $push: { key: '$submission_id', at: null } } } },
+    { $match: { batches: { $not: { $elemMatch: { status: 1 } } } } },
+    { $addFields: { pendingSince: { $ifNull: [{ $first: '$batches.createdAt' }, '$updatedAt'] } } },
+    { $match: { pendingSince: { $lt: cutoff } } },
+    { $group: { _id: '$campaign_id', item_count: { $sum: 1 }, items: { $push: { key: '$submission_id', at: '$pendingSince' } } } },
   ];
 }
 
@@ -131,13 +144,14 @@ async function aggregateWithFallback(collection, pipeline, options, log) {
  *   issues  - one row per (category, campaign) that is pending, with owner state resolved
  *   orphans - pending rows whose campaign no longer exists (cannot be attributed to anyone)
  */
-export async function fetchOpenIssues(db, now = new Date(), { log, zeroDecisions = new Map() } = {}) {
+export async function fetchOpenIssues(db, now = new Date(), { log, zeroDecisions = new Map(), holidays = new Set() } = {}) {
   const today = utcDate(now);
+  const cutoff = pendingCutoff(now, holidays);
   const perCampaignCounts = {
     [CATEGORY.INVOICE]: await db.collection('invoices').aggregate(invoiceApprovalPipeline()).toArray(),
-    [CATEGORY.CREATOR]: await db.collection('creator_submissions').aggregate(creatorSubmissionPipeline()).toArray(),
+    [CATEGORY.CREATOR]: await db.collection('creator_submissions').aggregate(creatorSubmissionPipeline(cutoff)).toArray(),
     [CATEGORY.SCREENSHOT]: await aggregateWithFallback(
-      db.collection('creator_submissions'), screenshotApprovalPipeline(), { hint: SCREENSHOT_INDEX_HINT }, log),
+      db.collection('creator_submissions'), screenshotApprovalPipeline(cutoff), { hint: SCREENSHOT_INDEX_HINT }, log),
   };
 
   // A screenshot item is one UPLOAD: a new upload for the same submission is a new item with a fresh count.
