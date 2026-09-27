@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { resolveRecipients } from '../lib/recipients.js';
 import { diffIssues, peopleFromIssues } from '../lib/sync.js';
 import { buildRawEmail, encodeHeader } from '../../lib/nudgeSend.mjs';
-import { buildEmail, buildSlackPing, itemLine, FIRST_SUBJECT } from '../lib/templates.js';
+import { buildEmail, buildSlackPing, itemLine, FIRST_SUBJECT, INVENTORY_EMAIL } from '../lib/templates.js';
+import { VENDOR_IDENTIFIED_PREFIX } from '../lib/effects.js';
 import { CATEGORY } from '../lib/planner.js';
 import { threadingSelfTest, slackSelfTest } from '../lib/selfTest.js';
 
@@ -137,6 +138,14 @@ test('email: zero-cost service line, follow-up, final and month-end wording; "do
   assert.ok(!/client is inactive/.test(zc));
   assert.match(zc, /\(Internal note: used Prayag tiwari for comment seeding!\)/);
   assert.match(zc, /Services: unmapped services misstate campaign margins/);
+
+  // once the lead has named a vendor (hold_reason carries it), the line quotes it back instead of
+  // asking again, and says inventory is looped in - it never repeats the "reach inventory at..." ask.
+  const escalated = buildEmail([{ issueId: 'z2', category: CATEGORY.ZERO_COST, campaign_name: 'RBL Card launch', detail: { service: 'ORM' }, hold_reason: `${VENDOR_IDENTIFIED_PREFIX}Diptanshu was the vendor; inventory already mapped it`, nextN: 2 }], { name: 'X', senderName: 'S', kind: 'followup' }).body;
+  assert.match(escalated, /You previously told us: "Diptanshu was the vendor; inventory already mapped it"/);
+  assert.match(escalated, /looped in the inventory team \(cc'd\)/);
+  assert.ok(!escalated.includes(`reach the inventory team at ${INVENTORY_EMAIL}`));
+
   const inv = [{ issueId: 'i1', category: CATEGORY.INVOICE, campaign_name: 'Alpha', item_count: 1, detail: {}, nextN: 2, claimedDone: true }];
   const f = buildEmail(inv, { name: 'X', senderName: 'S', kind: 'followup', hasInvoice: true, monthEnd: true, finalNoticeDay: false }).body;
   assert.match(f, /Following up on my earlier email/);

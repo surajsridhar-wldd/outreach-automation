@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { executePlan } from '../lib/executor.js';
 import { planRun, CATEGORY } from '../lib/planner.js';
+import { VENDOR_IDENTIFIED_PREFIX } from '../lib/effects.js';
+import { INVENTORY_EMAIL } from '../lib/templates.js';
 
 // Monday 2026-10-05, 11:00 IST
 const NOW = new Date('2026-10-05T05:30:00Z');
@@ -211,6 +213,26 @@ test('a manual manager override wins over the manager found in DMS', async () =>
   const store = fakeStore(); const senders = fakeSenders();
   await executePlan({ plan, mode: 'live', now: day, runId: 'r', store, senders, issuesById: w.issuesById, people: w.people, settings: SETTINGS });
   assert.deepEqual(senders.sent.emails[0].cc, ['chosen-boss@wldd.in']);
+});
+
+test('a zero-cost item where the lead already named a vendor CCs inventory; other items never do', async () => {
+  const store = fakeStore(); const senders = fakeSenders();
+  const plan = { today: '2026-10-05', monthEnd: false, finalNoticeDay: false, deferredRecipientIds: [], rampDone: false, messages: [
+    { recipientId: 'u1', lane: 'B', kind: 'followup', final: false, ccManager: false, items: [{ issueId: 'z1', nextN: 2 }] },
+    { recipientId: 'u2', lane: 'B', kind: 'followup', final: false, ccManager: false, items: [{ issueId: 'z2', nextN: 1 }] },
+  ] };
+  const people = new Map([
+    ['u1', { dms_user_id: 'u1', name: 'A', email: 'a@wldd.in' }],
+    ['u2', { dms_user_id: 'u2', name: 'B', email: 'b@wldd.in' }],
+  ]);
+  const issuesById = new Map([
+    ['z1', { campaign_name: 'RBL Card launch', category: CATEGORY.ZERO_COST, item_count: 1, detail: { service: 'ORM' }, hold_reason: `${VENDOR_IDENTIFIED_PREFIX}Diptanshu was the vendor`, nudge_count: 1 }],
+    ['z2', { campaign_name: 'Another Camp', category: CATEGORY.ZERO_COST, item_count: 1, detail: { service: 'ORM' }, nudge_count: 0 }],
+  ]);
+  await executePlan({ plan, mode: 'live', now: new Date('2026-10-05T06:30:00Z'), runId: 'r', store, senders, issuesById, people, settings: SETTINGS });
+  const [e1, e2] = senders.sent.emails;
+  assert.deepEqual(e1.cc, [INVENTORY_EMAIL]);
+  assert.deepEqual(e2.cc, []);
 });
 
 test('a run killed half way keeps the state of everything already sent', async () => {

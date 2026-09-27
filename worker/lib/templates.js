@@ -5,8 +5,10 @@
 // One numbered line per CAMPAIGN, so replies like "1. done, 3. need till Friday" map to campaigns.
 
 import { CATEGORY, tierOf } from './planner.js';
+import { VENDOR_IDENTIFIED_PREFIX } from './effects.js';
 
 export const FIRST_SUBJECT = '[Action Required] Pending items on DMS';
+export const INVENTORY_EMAIL = 'inventory@wldd.in';
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
@@ -21,7 +23,12 @@ export function itemLine(item) {
     case CATEGORY.PROPOSAL: return `In Proposal stage for ${item.detail?.pending_days ?? 'more than 14'} days. If the campaign is not going ahead, please mark it Cancelled. If it is approved or underway, update the status to Approved or Active. If discussions are still ongoing, no immediate action is needed; reply and update DMS once confirmed`;
     case CATEGORY.ZERO_COST: {
       const note = item.detail?.internal_note ? ` (Internal note: ${String(item.detail.internal_note).slice(0, 160)})` : '';
-      return `${item.detail?.service || 'A service'} shows zero deliverables and zero internal cost. If it was executed, please map the right vendors and deliverables: you can reach the inventory team at inventory@wldd.in. If it is planned for later, no action is needed yet. If it will never run, remove it from the campaign services${note}`;
+      const service = item.detail?.service || 'A service';
+      if (item.hold_reason?.startsWith(VENDOR_IDENTIFIED_PREFIX)) {
+        const said = item.hold_reason.slice(VENDOR_IDENTIFIED_PREFIX.length);
+        return `${service} still shows zero deliverables and zero internal cost on DMS. You previously told us: "${said}" - since it hasn't been mapped yet, I've looped in the inventory team (cc'd) with this thread to take it forward${note}`;
+      }
+      return `${service} shows zero deliverables and zero internal cost. If it was executed, please map the right vendors and deliverables: you can reach the inventory team at ${INVENTORY_EMAIL}. If it is planned for later, no action is needed yet. If it will never run, remove it from the campaign services${note}`;
     }
     // Items the owner added by hand carry their own text (the message he used to write himself).
     default: return item.issue_text ? String(item.issue_text).trim().replace(/\s*\n+\s*/g, ' ') : 'needs your attention';
