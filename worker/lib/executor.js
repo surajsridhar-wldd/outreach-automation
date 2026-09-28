@@ -108,9 +108,9 @@ export async function executePlan({
         await store.addReviewItem({ kind: 'manager_missing', note: `${person.name} reached nudge 4+ but has no manager on file, so nobody was copied.` });
       }
     }
-    // A zero-cost item where the lead already named a vendor: loop inventory in from here on, so
-    // they see this and every later nudge on it (never before the lead has actually identified who
-    // did the work - see effects.js).
+    // A zero-cost item where the lead already named a vendor: inventory was notified straight away
+    // (replies.js) and has had 14 days; if it is still unmapped this is the follow-up, and it is on
+    // them now, so they stay copied on it and every later nudge (never before a vendor was named).
     if (items.some((it) => it.category === CATEGORY.ZERO_COST && it.hold_reason?.startsWith(VENDOR_IDENTIFIED_PREFIX))) {
       cc = [...new Set([...cc, INVENTORY_EMAIL])];
     }

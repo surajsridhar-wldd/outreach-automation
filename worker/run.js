@@ -67,7 +67,7 @@ export async function main(env = process.env) {
         const senderForReplies = await S.loadSender(db, settings.sender_user_email);
         replyStats = await readReplies({
           store: S.replyStore(db), senders: replySender, interpret: ({ prompt }) => replySender.interpret(prompt), apiKey: null, now: realNow, settings,
-          people: prePeople, issuesById: new Map(preIssues.map((r) => [r.id, r])), senderEmail: senderForReplies.gmail_address, log: console.log,
+          people: prePeople, issuesById: new Map(preIssues.map((r) => [r.id, r])), senderEmail: senderForReplies.gmail_address, senderName: senderForReplies.name, mode, log: console.log,
         });
       } catch (e) { replyStats = { error: e.message }; }
     } else if (mode === 'live' || mode === 'canary') replyStats = { skipped: 'no sender' };
