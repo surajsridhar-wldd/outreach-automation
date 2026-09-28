@@ -142,8 +142,8 @@ test('email: zero-cost service line, follow-up, final and month-end wording; "do
   // once the lead has named a vendor (hold_reason carries it), the line quotes it back instead of
   // asking again, and says inventory is looped in - it never repeats the "reach inventory at..." ask.
   const escalated = buildEmail([{ issueId: 'z2', category: CATEGORY.ZERO_COST, campaign_name: 'RBL Card launch', detail: { service: 'ORM' }, hold_reason: `${VENDOR_IDENTIFIED_PREFIX}Diptanshu was the vendor; inventory already mapped it`, nextN: 2 }], { name: 'X', senderName: 'S', kind: 'followup' }).body;
-  assert.match(escalated, /You previously told us: "Diptanshu was the vendor; inventory already mapped it"/);
-  assert.match(escalated, /looped in the inventory team \(cc'd\)/);
+  assert.match(escalated, /You told us: "Diptanshu was the vendor; inventory already mapped it"/);
+  assert.match(escalated, /looped the inventory team in right away to map it - it's on them from here, but it's still not mapped, so following up with them again \(cc'd\)/);
   assert.ok(!escalated.includes(`reach the inventory team at ${INVENTORY_EMAIL}`));
 
   const inv = [{ issueId: 'i1', category: CATEGORY.INVOICE, campaign_name: 'Alpha', item_count: 1, detail: {}, nextN: 2, claimedDone: true }];
