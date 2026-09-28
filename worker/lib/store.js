@@ -275,6 +275,8 @@ export function replyStore(db, { windowDays = 30 } = {}) {
     },
     async markUnreachable(id, reason) { ok(await db.from('dms_people').update({ unreachable_at: new Date().toISOString(), unreachable_reason: reason }).eq('dms_user_id', id), 'mark unreachable'); },
     addReviewItem: (item) => addReviewItem(db, item),
+    async insertMessage(row) { return ok(await db.from('messages_out').insert(row).select('id').single(), 'insert message').id; },
+    async updateMessage(id, patch) { ok(await db.from('messages_out').update(patch).eq('id', id), 'update message'); },
     async applyEffect(e, messageInId, todayIst, nowIso) {
       if (e.type === 'claimed_done') {
         ok(await db.from('issues').update({ claimed_done_at: nowIso }).eq('id', e.issueId).eq('state', 'open'), 'record done claim');

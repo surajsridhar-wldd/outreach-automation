@@ -9,6 +9,7 @@
 import { cleanReply, isAutoReply, addressOf } from './cleanText.js';
 import { buildPrompt } from './llm.js';
 import { effectsFor } from './effects.js';
+import { buildInventoryNotice, INVENTORY_EMAIL } from './templates.js';
 import { istDate } from './time.js';
 
 export function makePersonResolver(people) {
@@ -50,8 +51,8 @@ export async function processBounces({ store, senders, peopleByEmail }) {
   return marked;
 }
 
-export async function readReplies({ store, senders, interpret, apiKey, now, settings, people, issuesById, senderEmail, log = () => {} }) {
-  const stats = { threadsRead: 0, newMessages: 0, interpreted: 0, effects: 0, reviewItems: 0, skippedCap: 0, llmErrors: 0, bounces: 0, cost: 0 };
+export async function readReplies({ store, senders, interpret, apiKey, now, settings, people, issuesById, senderEmail, senderName, mode = 'shadow', log = () => {} }) {
+  const stats = { threadsRead: 0, newMessages: 0, interpreted: 0, effects: 0, reviewItems: 0, skippedCap: 0, llmErrors: 0, bounces: 0, cost: 0, inventoryNotified: 0 };
   const todayIst = istDate(now);
   const own = String(senderEmail || '').toLowerCase();
   const peopleById = new Map(people.map((p) => [p.dms_user_id, p]));
@@ -113,6 +114,30 @@ export async function readReplies({ store, senders, interpret, apiKey, now, sett
       });
       for (const e of eff.effects) { await store.applyEffect(e, row.id, todayIst, now.toISOString()); stats.effects++; }
       for (const r of eff.review) { await store.addReviewItem({ ...r, kind: r.kind, issue_id: r.issueId, message_in_id: row.id, note: r.note }); stats.reviewItems++; }
+      // Vendor named for a zero-cost item: notify inventory right away, once, outside the numbered
+      // digest (they don't care about the lead's other pending items). Live mode only (canary must
+      // never reach a real team mailbox). Stored under the placeholder recipient 'inventory-team',
+      // with no run_id and no message_items rows, so it can neither collide with the lead's own
+      // digest (unique per run/recipient/channel, and "one message per person per day") nor pull
+      // inventory's replies into the reply reader.
+      for (const n of eff.notifyInventory) {
+        const issue = issuesById.get(n.issueId);
+        const lead = issue ? peopleById.get(issue.owner_dms_user_id) : null;
+        if (!issue || !lead?.email || mode !== 'live') continue;
+        const notice = buildInventoryNotice({ campaignName: issue.campaign_name, service: issue.detail?.service, vendorInfo: n.vendorInfo, leadName: lead.name, senderName });
+        const msgId = await store.insertMessage({
+          recipient_dms_user_id: 'inventory-team', channel: 'email', kind: 'followup', status: 'sending',
+          to_address: INVENTORY_EMAIL, cc_addresses: [lead.email], subject: notice.subject, body: notice.body, mode,
+        });
+        try {
+          const r = await senders.email({ idempotencyKey: `inventory-${row.id}-${n.issueId}`, to: INVENTORY_EMAIL, cc: [lead.email], subject: notice.subject, body: notice.body });
+          await store.updateMessage(msgId, { status: 'sent', sent_at: now.toISOString(), gmail_message_id: r.gmailMessageId, gmail_thread_id: r.threadId });
+          stats.inventoryNotified++;
+        } catch (e) {
+          await store.updateMessage(msgId, { status: 'failed', error: e.message });
+          await store.addReviewItem({ kind: 'send_failed', note: `Notifying inventory about ${issue.campaign_name} (${issue.detail?.service || 'service'}) failed: ${e.message}` });
+        }
+      }
       const target = interp.target_person ? resolvePerson(interp.target_person) : null;
       rows.push({
         message_in_id: row.id, issue_id: eff.issueIds.length === 1 ? eff.issueIds[0] : null, intent: interp.intent,

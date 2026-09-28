@@ -92,13 +92,15 @@ test('a zero-cost reply naming the vendor gets a 14-day hold carrying that text,
   const zc = (o = {}) => ctx({ items: [{ n: 1, issueId: 'z1', category: 'zero_cost_services', ownerId: 'u1' }], ...o });
   const e = effectsFor({ item_no: 1, intent: 'other', vendor_info: 'Diptanshu was the vendor; inventory already mapped it', evidence: 'x', confidence: 0.9 }, zc());
   assert.deepEqual(e.effects, [{ type: 'hold', issueId: 'z1', until: '2026-10-05', reason: `${VENDOR_IDENTIFIED_PREFIX}Diptanshu was the vendor; inventory already mapped it`, capped: false }]);
+  assert.deepEqual(e.notifyInventory, [{ issueId: 'z1', vendorInfo: 'Diptanshu was the vendor; inventory already mapped it' }]);
 
   // not from a third party on the thread
-  assert.deepEqual(effectsFor({ item_no: 1, intent: 'other', vendor_info: 'Diptanshu', evidence: 'x', confidence: 0.9 }, zc({ fromOwner: false })).effects, []);
+  const third = effectsFor({ item_no: 1, intent: 'other', vendor_info: 'Diptanshu', evidence: 'x', confidence: 0.9 }, zc({ fromOwner: false }));
+  assert.deepEqual(third.effects, []); assert.deepEqual(third.notifyInventory, []);
 
   // vendor_info on a non-zero-cost item is ignored (only the normal intent effects apply, if any)
   const other = effectsFor({ item_no: 1, intent: 'other', vendor_info: 'Diptanshu', evidence: 'x', confidence: 0.9 }, ctx());
-  assert.deepEqual(other.effects, []);
+  assert.deepEqual(other.effects, []); assert.deepEqual(other.notifyInventory, []);
 
   // co-occurring with an ordinary hold: both are recorded, the vendor-specific reason applies last (wins on hold_reason)
   const both = effectsFor({ item_no: 1, intent: 'hold', promised_date: '2026-09-28', vendor_info: 'Diptanshu did it', evidence: 'give me a few days', confidence: 0.9 }, zc());
@@ -188,6 +190,29 @@ test('auto-replies are stored but never sent to the model; the spend cap stops m
   await f.run(); assert.equal(calls, 0); assert.equal(f.log.min.length, 1);
   const g = fake({ threads: THREADS, msgs: [ms()], llm: async (a) => { calls++; return llmOk(a); }, people: P, issues: ISS, spent: 3.01 });
   const s = await g.run(); assert.equal(calls, 0); assert.equal(s.skippedCap, 1); assert.match(g.log.review[0].note, /budget/);
+});
+
+test('a lead naming the vendor for a zero-cost item notifies inventory right away, once, live mode only; the item is held 14 days', async () => {
+  const zcIssues = [{ id: 'z1', category: 'zero_cost_services', campaign_name: 'RBL Card launch', owner_dms_user_id: 'u1', detail: { service: 'ORM' } }];
+  const zcThreads = [{ threadId: 'T1', recipientId: 'u1', outs: [{ id: 'o1', sent_at: '2026-09-21T05:30:00Z', items: [{ issue_id: 'z1', item_no: 1 }] }] }];
+  const llmVendor = async () => ({ model: 'm', tokensIn: 1, tokensOut: 1, costUsd: 0, items: [{ item_no: 1, intent: 'other', vendor_info: 'Diptanshu was the vendor; inventory already mapped it', evidence: 'x', confidence: 0.9 }] });
+  const go = async (mode) => {
+    const f = fake({ threads: zcThreads, msgs: [ms({ text: 'Diptanshu was the vendor' })], llm: llmVendor, people: P, issues: zcIssues });
+    const sentEmails = []; const stored = [];
+    f.senders.email = async (a) => { sentEmails.push(a); return { gmailMessageId: 'g', threadId: 't' }; };
+    f.store.insertMessage = async (r) => { stored.push(r); return `msg${stored.length}`; };
+    f.store.updateMessage = async () => {};
+    const stats = await readReplies({ store: f.store, senders: f.senders, interpret: llmVendor, apiKey: 'k', now: new Date('2026-09-22T06:00:00Z'), settings: { llm_monthly_cap_usd: 3 }, people: P, issuesById: new Map(zcIssues.map((i) => [i.id, i])), senderEmail: 'suraj@wldd.in', senderName: 'Suraj Sridhar', mode });
+    return { f, sentEmails, stored, stats };
+  };
+  const live = await go('live');
+  assert.equal(live.sentEmails.length, 1);
+  assert.equal(live.sentEmails[0].to, 'inventory@wldd.in'); assert.deepEqual(live.sentEmails[0].cc, ['priya@wldd.in']);
+  assert.match(live.sentEmails[0].body, /Diptanshu was the vendor; inventory already mapped it/);
+  assert.equal(live.stored[0].recipient_dms_user_id, 'inventory-team'); assert.equal(live.stored[0].run_id, undefined);
+  assert.equal(live.stats.inventoryNotified, 1);
+  assert.deepEqual(live.f.log.effects.map((e) => e.type), ['hold']);
+  for (const mode of ['shadow', 'canary', 'rehearsal']) assert.equal((await go(mode)).sentEmails.length, 0, `${mode} never reaches a real team mailbox`);
 });
 
 test('a reply from someone else on the thread cannot claim done or set holds', async () => {

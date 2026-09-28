@@ -26,7 +26,7 @@ export function itemLine(item) {
       const service = item.detail?.service || 'A service';
       if (item.hold_reason?.startsWith(VENDOR_IDENTIFIED_PREFIX)) {
         const said = item.hold_reason.slice(VENDOR_IDENTIFIED_PREFIX.length);
-        return `${service} still shows zero deliverables and zero internal cost on DMS. You previously told us: "${said}" - since it hasn't been mapped yet, I've looped in the inventory team (cc'd) with this thread to take it forward${note}`;
+        return `${service} still shows zero deliverables and zero internal cost on DMS. You told us: "${said}", and I looped the inventory team in right away to map it - it's on them from here, but it's still not mapped, so following up with them again (cc'd)${note}`;
       }
       return `${service} shows zero deliverables and zero internal cost. If it was executed, please map the right vendors and deliverables: you can reach the inventory team at ${INVENTORY_EMAIL}. If it is planned for later, no action is needed yet. If it will never run, remove it from the campaign services${note}`;
     }
@@ -115,4 +115,27 @@ export function buildSlackPing({ name, count, emailDate }) {
 
 export function rehearsalBanner({ intendedTo, cc }) {
   return `[REHEARSAL. This would have gone to ${intendedTo}${cc?.length ? `, cc ${cc.join(', ')}` : ''}. Nothing was sent to them.]`;
+}
+
+/**
+ * Sent once, immediately, the same run a lead's reply names who actually did a zero-cost service -
+ * not bundled into the numbered digest, since inventory doesn't care about the lead's other pending
+ * items. To inventory, cc the lead so they see it went out and who to loop back to once it's mapped.
+ */
+export function buildInventoryNotice({ campaignName, service, vendorInfo, leadName, senderName }) {
+  return {
+    subject: `[Action Required] Map ${service || 'a service'} on DMS - ${campaignName}`,
+    body: [
+      'Hi,',
+      '',
+      `${leadName} confirmed the following for ${campaignName} (${service || 'a service'}), which currently shows zero deliverables and zero internal cost on DMS:`,
+      '',
+      `"${vendorInfo}"`,
+      '',
+      `Could you map the right vendor and deliverables for this on DMS? Loop ${firstName(leadName)} back in once it's done.`,
+      '',
+      'Thanks,',
+      senderName,
+    ].join('\n'),
+  };
 }
