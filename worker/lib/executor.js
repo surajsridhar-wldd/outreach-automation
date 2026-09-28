@@ -15,7 +15,8 @@
 
 import { inSendWindow, istDate } from './time.js';
 import { breakerCheck, CATEGORY } from './planner.js';
-import { buildEmail, buildSlackPing, FIRST_SUBJECT, rehearsalBanner } from './templates.js';
+import { buildEmail, buildSlackPing, FIRST_SUBJECT, rehearsalBanner, INVENTORY_EMAIL } from './templates.js';
+import { VENDOR_IDENTIFIED_PREFIX } from './effects.js';
 
 export const MODES = ['shadow', 'rehearsal', 'canary', 'live'];
 
@@ -106,6 +107,12 @@ export async function executePlan({
         stats.managerMissing++;
         await store.addReviewItem({ kind: 'manager_missing', note: `${person.name} reached nudge 4+ but has no manager on file, so nobody was copied.` });
       }
+    }
+    // A zero-cost item where the lead already named a vendor: loop inventory in from here on, so
+    // they see this and every later nudge on it (never before the lead has actually identified who
+    // did the work - see effects.js).
+    if (items.some((it) => it.category === CATEGORY.ZERO_COST && it.hold_reason?.startsWith(VENDOR_IDENTIFIED_PREFIX))) {
+      cc = [...new Set([...cc, INVENTORY_EMAIL])];
     }
 
     const isReal = mode === 'live' || (mode === 'canary' && (allow.has(person.email.toLowerCase()) || allow.has(String(person.dms_user_id).toLowerCase())));

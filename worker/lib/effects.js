@@ -2,6 +2,7 @@
 // does); they can pause nudging (holds, capped), add or move owners, or ask for a human to look.
 
 import { addDays } from './time.js';
+import { CATEGORY } from './planner.js';
 
 export const DEFAULT_HOLD_CAPS = { invoice_approvals: 5, creator_submissions: 21, screenshot_approvals: 21, pending_closings: 21, pending_proposals: 35 };
 // Benefit of the doubt: for a proposal, whatever timeline the lead gives we wait a week longer before reminding them again
@@ -9,6 +10,20 @@ export const DEFAULT_HOLD_CAPS = { invoice_approvals: 5, creator_submissions: 21
 export const HOLD_GRACE_DAYS = { pending_proposals: 7 };
 const MIN_CONFIDENCE = 0.6;
 const DEFAULT_HOLD_DAYS = 7;
+// Owner decision, 2026-09-27: once a lead names who actually did a zero-cost service, hold 14 days
+// instead of nudging them again about something they've already answered - inventory hasn't had a
+// chance to map it yet. hold_reason carries this exact marker so templates.js and executor.js can
+// recognise it later, quote the vendor info back, and loop inventory@wldd.in in from then on.
+export const VENDOR_HOLD_DAYS = 14;
+export const VENDOR_IDENTIFIED_PREFIX = 'vendor_identified: ';
+
+// Owner decision, 2026-09-28: a blocked/question/dispute reply is someone asking the owner for
+// help, not for another nudge - it stops ALL automated follow-up on the item (email, Slack, the
+// 3rd-nudge ping, manager cc) until the owner has actually looked at the review item or this hold
+// runs out, whichever comes first. Found via a real case: a lead asked "how do I proceed?", it sat
+// unanswered in review, and the automation escalated to a Slack ping on schedule regardless - which
+// reads as pestering someone who is waiting on a reply, not ignoring the automation.
+export const REVIEW_HOLD_DAYS = 14;
 
 const isDate = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s));
 
@@ -79,8 +94,26 @@ export function effectsFor(interp, ctx) {
     case 'dispute':
       out.needsReview = true;
       for (const t of targets.slice(0, 1)) out.review.push({ kind: interp.intent, issueId: t.issueId, note: `"${interp.evidence}"` });
+      // Pause every item this reply touches, not just the one named in the review item - a person
+      // asking for help on item 2 should not keep getting chased on item 2 while only item 1 shows
+      // up in the queue.
+      for (const t of targets) out.effects.push({ type: 'hold', issueId: t.issueId, until: addDays(ctx.todayIst, REVIEW_HOLD_DAYS), reason: `${interp.intent}: ${interp.evidence}`.slice(0, 200), capped: false });
       break;
     default: break; // acknowledged, noise, other: recorded only
+  }
+
+  // Vendor identified for a zero-cost item: on top of whatever intent above, hold 14 days instead
+  // of nudging again about something already answered. Only the owner's own account can supply this
+  // (same rule as done_claimed/hold/etc above); pushed after the switch so its hold_reason - which
+  // carries the actual vendor text - wins over a plain "hold"/"waiting_on" reason recorded above.
+  if (ctx.fromOwner && interp.vendor_info) {
+    for (const t of targets) {
+      if (t.category !== CATEGORY.ZERO_COST) continue;
+      out.effects.push({
+        type: 'hold', issueId: t.issueId, until: addDays(ctx.todayIst, VENDOR_HOLD_DAYS),
+        reason: `${VENDOR_IDENTIFIED_PREFIX}${interp.vendor_info}`.slice(0, 300), capped: false,
+      });
+    }
   }
   return out;
 }

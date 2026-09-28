@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { cleanReply, isAutoReply, addressOf } from '../lib/cleanText.js';
-import { effectsFor } from '../lib/effects.js';
+import { effectsFor, VENDOR_IDENTIFIED_PREFIX } from '../lib/effects.js';
 import { interpretReply, buildPrompt } from '../lib/llm.js';
 import { readReplies, makePersonResolver } from '../lib/replies.js';
 import { executePlan } from '../lib/executor.js';
@@ -68,16 +68,43 @@ test('loop-in adds a co-owner; owner redirect reassigns; unmatched or ambiguous 
   }
 });
 
-test('questions, blocks, disputes and low-confidence answers go to review; nothing else changes', () => {
+test('questions, blocks and disputes go to review AND pause nudging on every item they touch, so the automation never chases someone who is waiting on a human reply', () => {
   for (const intent of ['question', 'blocked', 'dispute']) {
-    const r = effectsFor({ item_no: 1, intent, evidence: 'why', confidence: 0.9 }, ctx());
-    assert.equal(r.review[0].kind, intent); assert.deepEqual(r.effects, []);
+    const r = effectsFor({ item_no: null, intent, evidence: 'why', confidence: 0.9 }, ctx());
+    assert.equal(r.review.length, 1, 'one review item even when it touches multiple issues');
+    assert.equal(r.review[0].kind, intent);
+    assert.deepEqual(r.effects, [
+      { type: 'hold', issueId: 'i1', until: '2026-10-05', reason: `${intent}: why`, capped: false },
+      { type: 'hold', issueId: 'i2', until: '2026-10-05', reason: `${intent}: why`, capped: false },
+    ], 'every item the reply touches is paused, not just the one shown in review');
   }
+});
+
+test('questions/blocks/disputes still go to review with low-confidence and unmatched-item handling unchanged', () => {
   const low = effectsFor({ item_no: 1, intent: 'done_claimed', evidence: 'maybe', confidence: 0.4 }, ctx());
   assert.deepEqual(low.effects, []); assert.equal(low.review[0].kind, 'low_confidence');
   const bad = effectsFor({ item_no: 7, intent: 'done_claimed', evidence: 'x', confidence: 0.9 }, ctx());
   assert.deepEqual(bad.effects, []); assert.equal(bad.needsReview, true);
   assert.deepEqual(effectsFor({ item_no: 1, intent: 'noise', evidence: 'thanks', confidence: 0.2 }, ctx()).review, []);
+});
+
+test('a zero-cost reply naming the vendor gets a 14-day hold carrying that text, on top of its intent; never from a non-owner, never for other categories', () => {
+  const zc = (o = {}) => ctx({ items: [{ n: 1, issueId: 'z1', category: 'zero_cost_services', ownerId: 'u1' }], ...o });
+  const e = effectsFor({ item_no: 1, intent: 'other', vendor_info: 'Diptanshu was the vendor; inventory already mapped it', evidence: 'x', confidence: 0.9 }, zc());
+  assert.deepEqual(e.effects, [{ type: 'hold', issueId: 'z1', until: '2026-10-05', reason: `${VENDOR_IDENTIFIED_PREFIX}Diptanshu was the vendor; inventory already mapped it`, capped: false }]);
+
+  // not from a third party on the thread
+  assert.deepEqual(effectsFor({ item_no: 1, intent: 'other', vendor_info: 'Diptanshu', evidence: 'x', confidence: 0.9 }, zc({ fromOwner: false })).effects, []);
+
+  // vendor_info on a non-zero-cost item is ignored (only the normal intent effects apply, if any)
+  const other = effectsFor({ item_no: 1, intent: 'other', vendor_info: 'Diptanshu', evidence: 'x', confidence: 0.9 }, ctx());
+  assert.deepEqual(other.effects, []);
+
+  // co-occurring with an ordinary hold: both are recorded, the vendor-specific reason applies last (wins on hold_reason)
+  const both = effectsFor({ item_no: 1, intent: 'hold', promised_date: '2026-09-28', vendor_info: 'Diptanshu did it', evidence: 'give me a few days', confidence: 0.9 }, zc());
+  assert.equal(both.effects.length, 2);
+  assert.equal(both.effects[0].type, 'hold'); assert.equal(both.effects[0].until, '2026-09-28');
+  assert.equal(both.effects[1].reason, `${VENDOR_IDENTIFIED_PREFIX}Diptanshu did it`);
 });
 
 // ---------- model call ----------
