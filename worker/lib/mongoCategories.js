@@ -122,7 +122,7 @@ export function resolveManager(user, cohortLeadId, podLeadId, usersById) {
 }
 
 const CAMPAIGN_PROJECTION = {
-  _id: 0, campaign_id: 1, name: 1, campaign_status: 1, campaign_lead: 1,
+  _id: 0, campaign_id: 1, name: 1, campaign_status: 1, campaign_lead: 1, co_campaign_lead: 1,
   posting_end_date: 1, createdAt: 1, client_id: 1, actual_cohort: 1, actual_pod: 1,
 };
 
@@ -191,7 +191,7 @@ export async function fetchOpenIssues(db, now = new Date(), { log, zeroDecisions
       .find({ campaign_id: { $in: missingIds } }, { projection: CAMPAIGN_PROJECTION }).toArray());
   }
 
-  const leadIds = [...new Set([...campaignDocs.values()].map((c) => c.campaign_lead).filter(Boolean))];
+  const leadIds = [...new Set([...campaignDocs.values()].flatMap((c) => [c.campaign_lead, c.co_campaign_lead]).filter(Boolean))];
   const USER_PROJECTION = { _id: 0, id: 1, name: 1, email: 1, is_deleted: 1, cohort_id: 1, pod_id: 1 };
   const users = leadIds.length ? await db.collection('users').find({ id: { $in: leadIds } }, { projection: USER_PROJECTION }).toArray() : [];
   const userById = new Map(users.map((u) => [u.id, u]));
@@ -213,21 +213,31 @@ export async function fetchOpenIssues(db, now = new Date(), { log, zeroDecisions
     const state = !campaign.campaign_lead || !u ? 'missing' : u.is_deleted === false ? 'active' : 'deleted';
     const mgr = u ? resolveManager(u, cohortLeadOf.get(u.cohort_id), podLeadOf.get(u.pod_id), managersById)
       : { manager_dms_user_id: null, manager_name: null, manager_email: null, manager_source: null };
+    // The co-campaign lead is only ever a fallback (recipients.js) when the lead cannot be reached.
+    const cu = campaign.co_campaign_lead && campaign.co_campaign_lead !== campaign.campaign_lead ? userById.get(campaign.co_campaign_lead) : null;
+    const cmgr = cu ? resolveManager(cu, cohortLeadOf.get(cu.cohort_id), podLeadOf.get(cu.pod_id), managersById) : null;
     return {
       owner_dms_user_id: campaign.campaign_lead || null, owner_state: state, owner_name: u?.name ?? null, owner_email: u?.email ?? null,
       owner_manager_id: mgr.manager_dms_user_id, owner_manager_name: mgr.manager_name, owner_manager_email: mgr.manager_email, owner_manager_source: mgr.manager_source,
+      co_lead: cu ? {
+        dms_user_id: cu.id, name: cu.name ?? null, email: cu.email ?? null, state: cu.is_deleted === false ? 'active' : 'deleted',
+        manager_id: cmgr.manager_dms_user_id, manager_name: cmgr.manager_name, manager_email: cmgr.manager_email, manager_source: cmgr.manager_source,
+      } : null,
     };
   };
 
-  const base = (category, campaign, item_count, detail) => ({
-    category,
-    campaign_id: campaign.campaign_id,
-    campaign_name: campaign.name,
-    campaign_status: campaign.campaign_status,
-    item_count,
-    detail,
-    ...ownerInfo(campaign),
-  });
+  const base = (category, campaign, item_count, detail) => {
+    const owner = ownerInfo(campaign);
+    return {
+      category,
+      campaign_id: campaign.campaign_id,
+      campaign_name: campaign.name,
+      campaign_status: campaign.campaign_status,
+      item_count,
+      detail: owner.co_lead ? { ...detail, co_lead_dms_user_id: owner.co_lead.dms_user_id } : detail,
+      ...owner,
+    };
+  };
 
   const issues = [];
   const orphans = [];

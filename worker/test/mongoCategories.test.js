@@ -45,7 +45,7 @@ function fakeDb({ hintFails = false } = {}) {
   };
   const campaigns = {
     'c-inv': { campaign_id: 'c-inv', name: 'Invoice Camp', campaign_status: 'Complete', campaign_lead: 'u-active' },
-    'c-cre': { campaign_id: 'c-cre', name: 'Creator Camp', campaign_status: 'Active', campaign_lead: 'u-deleted' },
+    'c-cre': { campaign_id: 'c-cre', name: 'Creator Camp', campaign_status: 'Active', campaign_lead: 'u-deleted', co_campaign_lead: 'u-active' },
     'c-close': { campaign_id: 'c-close', name: 'Closing Camp', campaign_status: 'Active', campaign_lead: 'u-missing', posting_end_date: new Date('2026-09-01T18:30:00Z') },
     'c-zero': { campaign_id: 'c-zero', name: 'Zero Camp', campaign_status: 'Complete', campaign_lead: 'u-active', client_id: 'cl1' },
     'c-prop': { campaign_id: 'c-prop', name: 'Proposal Camp', campaign_status: 'Proposal', campaign_lead: null, createdAt: new Date('2026-08-20T10:00:00Z') },
@@ -94,6 +94,11 @@ test('fetchOpenIssues resolves owners, drops orphans, and computes ages', async 
   assert.equal(by(CATEGORY.INVOICE, 'c-inv').owner_manager_source, 'cohort');
   assert.equal(by(CATEGORY.CREATOR, 'c-cre').owner_manager_email, null, 'a deleted lead has no manager to resolve');
   assert.equal(by(CATEGORY.SCREENSHOT, 'c-inv').item_count, 4);
+  const cre = by(CATEGORY.CREATOR, 'c-cre');
+  assert.equal(cre.co_lead.dms_user_id, 'u-active', 'the co-campaign lead is read as the fallback recipient');
+  assert.equal(cre.co_lead.state, 'active'); assert.equal(cre.co_lead.manager_email, 'boss1@wldd.in');
+  assert.equal(cre.detail.co_lead_dms_user_id, 'u-active');
+  assert.equal(by(CATEGORY.INVOICE, 'c-inv').co_lead, null); assert.equal(by(CATEGORY.INVOICE, 'c-inv').detail.co_lead_dms_user_id, undefined);
   assert.equal(by(CATEGORY.CREATOR, 'c-cre').owner_state, 'deleted');
   assert.equal(by(CATEGORY.CLOSING, 'c-close').owner_state, 'missing');       // lead has no user record
   assert.equal(by(CATEGORY.CLOSING, 'c-close').detail.overdue_days, 18);      // Sep 1 -> Sep 19

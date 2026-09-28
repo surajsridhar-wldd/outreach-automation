@@ -43,16 +43,25 @@ export function diffIssues(existingOpen, fetched, { guardMinOpen = 10, guardDrop
 export function peopleFromIssues(fetched) {
   const byId = new Map();
   for (const f of fetched) {
-    if (!f.owner_dms_user_id || byId.has(f.owner_dms_user_id)) continue;
-    byId.set(f.owner_dms_user_id, {
-      dms_user_id: f.owner_dms_user_id,
-      name: f.owner_name,
-      email: f.owner_email,
-      is_deleted: f.owner_state === 'deleted' ? true : f.owner_state === 'active' ? false : null,
-      manager_email: f.owner_manager_email ?? null,
-      manager_name: f.owner_manager_name ?? null,
-      manager_source: f.owner_manager_source ?? null,
-    });
+    if (f.owner_dms_user_id && !byId.has(f.owner_dms_user_id)) {
+      byId.set(f.owner_dms_user_id, {
+        dms_user_id: f.owner_dms_user_id,
+        name: f.owner_name,
+        email: f.owner_email,
+        is_deleted: f.owner_state === 'deleted' ? true : f.owner_state === 'active' ? false : null,
+        manager_email: f.owner_manager_email ?? null,
+        manager_name: f.owner_manager_name ?? null,
+        manager_source: f.owner_manager_source ?? null,
+      });
+    }
+    // The co-campaign lead is the fallback recipient when the lead cannot be reached (recipients.js).
+    const c = f.co_lead;
+    if (c?.dms_user_id && !byId.has(c.dms_user_id)) {
+      byId.set(c.dms_user_id, {
+        dms_user_id: c.dms_user_id, name: c.name, email: c.email, is_deleted: c.state === 'deleted',
+        manager_email: c.manager_email ?? null, manager_name: c.manager_name ?? null, manager_source: c.manager_source ?? null,
+      });
+    }
   }
   return [...byId.values()];
 }
