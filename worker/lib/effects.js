@@ -17,6 +17,14 @@ const DEFAULT_HOLD_DAYS = 7;
 export const VENDOR_HOLD_DAYS = 14;
 export const VENDOR_IDENTIFIED_PREFIX = 'vendor_identified: ';
 
+// Owner decision, 2026-09-28: a blocked/question/dispute reply is someone asking the owner for
+// help, not for another nudge - it stops ALL automated follow-up on the item (email, Slack, the
+// 3rd-nudge ping, manager cc) until the owner has actually looked at the review item or this hold
+// runs out, whichever comes first. Found via a real case: a lead asked "how do I proceed?", it sat
+// unanswered in review, and the automation escalated to a Slack ping on schedule regardless - which
+// reads as pestering someone who is waiting on a reply, not ignoring the automation.
+export const REVIEW_HOLD_DAYS = 14;
+
 const isDate = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s));
 
 /**
@@ -86,6 +94,10 @@ export function effectsFor(interp, ctx) {
     case 'dispute':
       out.needsReview = true;
       for (const t of targets.slice(0, 1)) out.review.push({ kind: interp.intent, issueId: t.issueId, note: `"${interp.evidence}"` });
+      // Pause every item this reply touches, not just the one named in the review item - a person
+      // asking for help on item 2 should not keep getting chased on item 2 while only item 1 shows
+      // up in the queue.
+      for (const t of targets) out.effects.push({ type: 'hold', issueId: t.issueId, until: addDays(ctx.todayIst, REVIEW_HOLD_DAYS), reason: `${interp.intent}: ${interp.evidence}`.slice(0, 200), capped: false });
       break;
     default: break; // acknowledged, noise, other: recorded only
   }

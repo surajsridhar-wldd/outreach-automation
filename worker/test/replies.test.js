@@ -68,11 +68,19 @@ test('loop-in adds a co-owner; owner redirect reassigns; unmatched or ambiguous 
   }
 });
 
-test('questions, blocks, disputes and low-confidence answers go to review; nothing else changes', () => {
+test('questions, blocks and disputes go to review AND pause nudging on every item they touch, so the automation never chases someone who is waiting on a human reply', () => {
   for (const intent of ['question', 'blocked', 'dispute']) {
-    const r = effectsFor({ item_no: 1, intent, evidence: 'why', confidence: 0.9 }, ctx());
-    assert.equal(r.review[0].kind, intent); assert.deepEqual(r.effects, []);
+    const r = effectsFor({ item_no: null, intent, evidence: 'why', confidence: 0.9 }, ctx());
+    assert.equal(r.review.length, 1, 'one review item even when it touches multiple issues');
+    assert.equal(r.review[0].kind, intent);
+    assert.deepEqual(r.effects, [
+      { type: 'hold', issueId: 'i1', until: '2026-10-05', reason: `${intent}: why`, capped: false },
+      { type: 'hold', issueId: 'i2', until: '2026-10-05', reason: `${intent}: why`, capped: false },
+    ], 'every item the reply touches is paused, not just the one shown in review');
   }
+});
+
+test('questions/blocks/disputes still go to review with low-confidence and unmatched-item handling unchanged', () => {
   const low = effectsFor({ item_no: 1, intent: 'done_claimed', evidence: 'maybe', confidence: 0.4 }, ctx());
   assert.deepEqual(low.effects, []); assert.equal(low.review[0].kind, 'low_confidence');
   const bad = effectsFor({ item_no: 7, intent: 'done_claimed', evidence: 'x', confidence: 0.9 }, ctx());
