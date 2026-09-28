@@ -12,12 +12,12 @@ import { DEFAULT_SETTINGS } from './planner.js';
  * issues: issue rows (draft or open). overridesByIssue: Map issueId -> issue_owners rows.
  * Returns { plan, skipped:[{issueId, why}] }
  */
-export function buildManualPlan({ issues, overridesByIssue = new Map(), redirects = new Map(), now, settings = {} }) {
+export function buildManualPlan({ issues, overridesByIssue = new Map(), redirects = new Map(), people = null, now, settings = {} }) {
   const s = { ...DEFAULT_SETTINGS, ...settings };
   const byRecipient = new Map();
   const skipped = [];
   for (const issue of issues) {
-    const { ownerIds, needsOwner } = resolveRecipients(issue, overridesByIssue.get(issue.id) || [], redirects);
+    const { ownerIds, needsOwner } = resolveRecipients(issue, overridesByIssue.get(issue.id) || [], redirects, people);
     if (needsOwner || !ownerIds.length) { skipped.push({ issueId: issue.id, why: 'no owner to send to' }); continue; }
     const item = { issueId: issue.id, category: issue.category, nextN: (issue.nudge_count || 0) + 1, firstSeenAt: issue.first_seen_at, final: false };
     for (const rid of ownerIds) byRecipient.set(rid, [...(byRecipient.get(rid) || []), item]);
@@ -38,11 +38,12 @@ export function buildManualPlan({ issues, overridesByIssue = new Map(), redirect
 export async function sendNow({ issues, overrides = [], redirects = new Map(), people, store, senders, now = new Date(), settings = {}, channel = 'email' }) {
   const overridesByIssue = new Map();
   for (const o of overrides) overridesByIssue.set(o.issue_id, [...(overridesByIssue.get(o.issue_id) || []), o]);
-  const { plan, skipped } = buildManualPlan({ issues, overridesByIssue, redirects, now, settings });
+  const peopleById = new Map(people.map((p) => [p.dms_user_id, p]));
+  const { plan, skipped } = buildManualPlan({ issues, overridesByIssue, redirects, people: peopleById, now, settings });
   const stats = await executePlan({
     plan, mode: 'live', manual: true, channel, now, runId: null, store, senders,
     issuesById: new Map(issues.map((i) => [i.id, i])),
-    people: new Map(people.map((p) => [p.dms_user_id, p])),
+    people: peopleById,
     settings,
   });
   return { ...stats, skippedNoOwner: skipped };

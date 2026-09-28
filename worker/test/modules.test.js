@@ -24,6 +24,40 @@ test('recipients: a co-owner is added, a reassignment replaces the lead', () => 
   assert.deepEqual(resolveRecipients(base, [re]).ownerIds, ['newbie']);
 });
 
+test('recipients: the co-campaign lead is contacted ONLY when the lead cannot be reached (deleted, no email, or bounced); if they cannot be either, nobody', () => {
+  const ppl = (o = {}) => new Map(Object.entries({
+    lead: { email: 'lead@wldd.in' }, co: { email: 'co@wldd.in' }, ...o,
+  }).map(([id, p]) => [id, { dms_user_id: id, is_deleted: false, ...p }]));
+  const issue = (o = {}) => ({ ...base, detail: { co_lead_dms_user_id: 'co' }, ...o });
+
+  // a reachable lead keeps everything: the co-lead is never contacted
+  assert.deepEqual(resolveRecipients(issue(), [], new Map(), ppl()).ownerIds, ['lead']);
+  // lead deleted / missing in DMS -> co-lead
+  assert.deepEqual(resolveRecipients(issue({ owner_state: 'deleted' }), [], new Map(), ppl()), { ownerIds: ['co'], needsOwner: false });
+  assert.deepEqual(resolveRecipients(issue({ owner_dms_user_id: null, owner_state: 'missing' }), [], new Map(), ppl()).ownerIds, ['co']);
+  // lead active in DMS but their address bounced, or has no email -> co-lead (the Sony x ScoopWhoop case)
+  assert.deepEqual(resolveRecipients(issue(), [], new Map(), ppl({ lead: { email: 'lead@wldd.in', unreachable_at: '2026-09-21' } })).ownerIds, ['co']);
+  assert.deepEqual(resolveRecipients(issue(), [], new Map(), ppl({ lead: { email: null } })).ownerIds, ['co']);
+  // co-lead unreachable too -> leave it: deleted lead = needs an owner; bounced lead stays as-is (skipped at send, reported)
+  assert.equal(resolveRecipients(issue({ owner_state: 'deleted' }), [], new Map(), ppl({ co: { email: 'co@wldd.in', is_deleted: true } })).needsOwner, true);
+  assert.equal(resolveRecipients(issue({ owner_state: 'deleted' }), [], new Map(), ppl({ co: { email: 'co@wldd.in', unreachable_at: 'x' } })).needsOwner, true);
+  assert.equal(resolveRecipients(issue({ owner_state: 'deleted' }), [], new Map(), new Map([['lead', { dms_user_id: 'lead' }]])).needsOwner, true, 'a co-lead we know nothing about is never messaged');
+  // no co-lead on the campaign, or co-lead is the lead: nothing changes
+  assert.equal(resolveRecipients({ ...base, owner_state: 'deleted' }, [], new Map(), ppl()).needsOwner, true);
+  assert.equal(resolveRecipients(issue({ detail: { co_lead_dms_user_id: 'lead' }, owner_state: 'deleted' }), [], new Map(), ppl()).needsOwner, true);
+  // an explicit reassignment wins; a co-owner the lead looped in is still added on top of the fallback
+  const re = { role: 'reassigned_to', dms_user_id: 'newbie', lead_at_creation: 'lead', active: true };
+  assert.deepEqual(resolveRecipients(issue({ owner_state: 'deleted' }), [re], new Map(), ppl()).ownerIds, ['newbie']);
+  const helper = { role: 'co_owner', dms_user_id: 'helper', lead_at_creation: 'lead', active: true };
+  assert.deepEqual(resolveRecipients(issue({ owner_state: 'deleted' }), [helper], new Map(), ppl()).ownerIds.sort(), ['co', 'helper']);
+});
+
+test('people from a Mongo read include the co-campaign lead so they can be messaged', () => {
+  const ppl = peopleFromIssues([{ owner_dms_user_id: 'lead', owner_name: 'L', owner_email: 'l@wldd.in', owner_state: 'deleted', co_lead: { dms_user_id: 'co', name: 'C', email: 'c@wldd.in', state: 'active', manager_email: 'm@wldd.in' } }]);
+  assert.deepEqual(ppl.map((p) => [p.dms_user_id, p.is_deleted]), [['lead', true], ['co', false]]);
+  assert.equal(ppl[1].manager_email, 'm@wldd.in');
+});
+
 test('recipients: if the DMS lead changed, old overrides are ignored (DMS wins)', () => {
   const stale = { role: 'reassigned_to', dms_user_id: 'newbie', lead_at_creation: 'previous-lead', active: true };
   assert.deepEqual(resolveRecipients(base, [stale]).ownerIds, ['lead']);

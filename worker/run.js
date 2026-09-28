@@ -104,6 +104,7 @@ export async function main(env = process.env) {
       S.loadOpenIssues(db), S.loadOverrides(db), S.loadPeople(db), S.recentSentCounts(db), S.loadRedirects(db),
     ]);
     const holidays = holidaysForFetch;
+    const people = new Map(peopleRows.map((p) => [p.dms_user_id, p]));
     const overridesByIssue = new Map();
     for (const o of overrides) overridesByIssue.set(o.issue_id, [...(overridesByIssue.get(o.issue_id) || []), o]);
 
@@ -111,10 +112,9 @@ export async function main(env = process.env) {
     const enabled = Array.isArray(settings.enabled_categories) ? new Set(settings.enabled_categories) : null;
     // Manual issues follow their own switch (auto_followups); Mongo-sourced ones follow the category switch only.
     const plannerIssues = openRows.filter((r) => r.source === 'manual' ? r.auto_followups !== false : (!enabled || enabled.has(r.category))).map((r) => {
-      const { ownerIds, needsOwner } = resolveRecipients(r, overridesByIssue.get(r.id) || [], redirects);
+      const { ownerIds, needsOwner } = resolveRecipients(r, overridesByIssue.get(r.id) || [], redirects, people);
       return { id: r.id, category: r.category, ownerIds, needsOwner, nudgeCount: r.nudge_count, lastNudgedAt: r.last_nudged_at, holdUntil: r.hold_until, firstSeenAt: r.first_seen_at };
     });
-    const people = new Map(peopleRows.map((p) => [p.dms_user_id, p]));
     const planPeople = new Map(peopleRows.map((p) => [p.dms_user_id, { enteredAt: p.entered_at, skippedCount: p.skipped_count }]));
 
     const plan = planRun({
