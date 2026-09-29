@@ -71,9 +71,14 @@ export function evaluateIssue(issue, ctx) {
   // The ladder ends after the 5th nudge (except the month-end invoice push, which keeps going daily).
   if (!invoicePush && nextN > settings.ladderMax) return NOT_ELIGIBLE('ladder_exhausted');
 
-  // A hold lasts through its date; nudging resumes strictly after it. Never honoured during the
-  // month-end invoice push.
-  if (!invoicePush && issue.holdUntil && today <= issue.holdUntil) return NOT_ELIGIBLE('on_hold');
+  // A hold lasts through its date; nudging resumes strictly after it. Owner decision, 2026-09-29:
+  // this now applies during the month-end invoice push too - someone who has explicitly said they
+  // need a couple of days for a real reason still gets that time, even on invoices. The push still
+  // ignores the ladder cap and runs daily instead of Mon/Wed/Fri once the hold itself has expired;
+  // invoice_approvals' hold cap (5 days, DEFAULT_HOLD_CAPS in effects.js) keeps this from silently
+  // running out the whole month, and the standard "auto-rejected at month end" line already in
+  // every invoice email is the honest warning, not a daily repeat of it.
+  if (issue.holdUntil && today <= issue.holdUntil) return NOT_ELIGIBLE('on_hold');
 
   const lastDate = issue.lastNudgedAt ? istDate(issue.lastNudgedAt) : null;
 
