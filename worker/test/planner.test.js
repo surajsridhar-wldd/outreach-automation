@@ -147,9 +147,9 @@ test('ladder: manager copied from the 4th nudge, 5th is final, then the item lea
   assert.deepEqual(done.exhaustedIssueIds, ['issue-001']);
 });
 
-test('month-end invoice push: daily, holds ignored, no ladder cap; other categories stay on Mon/Wed/Fri', () => {
+test('month-end invoice push: daily, no ladder cap; other categories stay on Mon/Wed/Fri', () => {
   const people = { p001: { enteredAt: 'x' }, p002: { enteredAt: 'x' } };
-  const inv = makeIssue(1, CATEGORY.INVOICE, { nudgeCount: 6, holdUntil: '2026-10-30', lastNudgedAt: at('2026-10-23').toISOString() });
+  const inv = makeIssue(1, CATEGORY.INVOICE, { nudgeCount: 6, lastNudgedAt: at('2026-10-23').toISOString() });
   const cre = makeIssue(2, CATEGORY.CREATOR);
   // Tuesday 27 Oct is inside the window (starts 23rd) but is not a Mon/Wed/Fri
   const tue = planRun({ now: at('2026-10-27'), issues: [inv, cre], people });
@@ -161,6 +161,16 @@ test('month-end invoice push: daily, holds ignored, no ladder cap; other categor
   // Last two working days are "final notice"
   const last = planRun({ now: at('2026-10-30'), issues: [inv], people });
   assert.equal(last.messages[0].final, true);
+});
+
+test('month-end invoice push: an active hold (someone who explicitly asked for time) is still honoured, not overridden by the push', () => {
+  const held = makeIssue(1, CATEGORY.INVOICE, { holdUntil: '2026-10-28' });
+  const onHold = planRun({ now: at('2026-10-27'), issues: [held] });
+  assert.equal(onHold.messages.length, 0);
+  assert.equal(onHold.excluded.on_hold, 1);
+  // the moment the hold's own date passes, the daily push resumes as normal
+  const after = planRun({ now: at('2026-10-29'), issues: [held] });
+  assert.equal(after.messages.length, 1);
 });
 
 test('needs-owner issues are never sent, only reported', () => {
