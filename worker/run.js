@@ -56,6 +56,7 @@ export async function main(env = process.env) {
   try {
     // Sends left unconfirmed by a run that died are flagged for the owner, never silently repeated.
     const recovered = await S.recoverStale(db);
+    const holidaysForFetch = await S.loadHolidays(db);
 
     // 0. Read replies first, so a hold or a co-owner given this morning is respected by today's plan.
     // Only in live/canary (replies only exist for real messages) and never fatal to the run.
@@ -67,7 +68,7 @@ export async function main(env = process.env) {
         const senderForReplies = await S.loadSender(db, settings.sender_user_email);
         replyStats = await readReplies({
           store: S.replyStore(db), senders: replySender, interpret: ({ prompt }) => replySender.interpret(prompt), apiKey: null, now: realNow, settings,
-          people: prePeople, issuesById: new Map(preIssues.map((r) => [r.id, r])), senderEmail: senderForReplies.gmail_address, senderName: senderForReplies.name, mode, log: console.log,
+          people: prePeople, issuesById: new Map(preIssues.map((r) => [r.id, r])), senderEmail: senderForReplies.gmail_address, senderName: senderForReplies.name, mode, holidays: holidaysForFetch, log: console.log,
         });
       } catch (e) { replyStats = { error: e.message }; }
     } else if (mode === 'live' || mode === 'canary') replyStats = { skipped: 'no sender' };
@@ -75,7 +76,6 @@ export async function main(env = process.env) {
     // 1. Read Mongo (read-only) and mirror it into `issues`.
     await mongo.connect();
     const zeroDecisions = await S.loadZeroCostDecisions(db);
-    const holidaysForFetch = await S.loadHolidays(db);
     const { issues: fetched, orphans, manualVerify, zeroExcluded } = await fetchOpenIssues(mongo.db('test'), realNow, { log: console.log, zeroDecisions, holidays: holidaysForFetch });
     let zeroRaised = 0;
     for (const z of manualVerify || []) if (await S.addManualVerifyOnce(db, z)) zeroRaised++;

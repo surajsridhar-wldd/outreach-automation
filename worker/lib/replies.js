@@ -10,7 +10,7 @@ import { cleanReply, isAutoReply, addressOf } from './cleanText.js';
 import { buildPrompt } from './llm.js';
 import { effectsFor } from './effects.js';
 import { buildInventoryNotice, INVENTORY_EMAIL } from './templates.js';
-import { istDate } from './time.js';
+import { istDate, inSendWindow } from './time.js';
 
 export function makePersonResolver(people) {
   const active = people.filter((p) => !p.is_deleted && p.email && /@wldd\.in$/i.test(p.email));
@@ -51,7 +51,7 @@ export async function processBounces({ store, senders, peopleByEmail }) {
   return marked;
 }
 
-export async function readReplies({ store, senders, interpret, apiKey, now, settings, people, issuesById, senderEmail, senderName, mode = 'shadow', log = () => {} }) {
+export async function readReplies({ store, senders, interpret, apiKey, now, settings, people, issuesById, senderEmail, senderName, mode = 'shadow', holidays = new Set(), log = () => {} }) {
   const stats = { threadsRead: 0, newMessages: 0, interpreted: 0, effects: 0, reviewItems: 0, skippedCap: 0, llmErrors: 0, bounces: 0, cost: 0, inventoryNotified: 0 };
   const todayIst = istDate(now);
   const own = String(senderEmail || '').toLowerCase();
@@ -107,11 +107,18 @@ export async function readReplies({ store, senders, interpret, apiKey, now, sett
     }
     spent += result.costUsd; stats.cost += result.costUsd; stats.interpreted++;
 
+    const effs = result.items.map((interp) => effectsFor(interp, {
+      todayIst, items, fromOwner: row.from_owner, senderId: senderPerson?.dms_user_id || null, holdCaps: settings.hold_caps, resolvePerson,
+    }));
+    // The inventory notice is a real email: like every other send it only goes on a working day inside the
+    // send window (never on a weekend, a holiday or at night). If this reply needs one and we cannot send
+    // now, nothing is applied and the reply stays unread-by-effects, so the next working run does all of it.
+    const canSendNow = mode === 'live' && inSendWindow(now, holidays, settings.send_window?.start_hour ?? 11, settings.send_window?.end_hour ?? 19);
+    if (effs.some((e) => e.notifyInventory.length) && !canSendNow) { stats.deferredInventory = (stats.deferredInventory || 0) + 1; return; }
+
     const rows = [];
     for (const [idx, interp] of result.items.entries()) {
-      const eff = effectsFor(interp, {
-        todayIst, items, fromOwner: row.from_owner, senderId: senderPerson?.dms_user_id || null, holdCaps: settings.hold_caps, resolvePerson,
-      });
+      const eff = effs[idx];
       for (const e of eff.effects) { await store.applyEffect(e, row.id, todayIst, now.toISOString()); stats.effects++; }
       for (const r of eff.review) { await store.addReviewItem({ ...r, kind: r.kind, issue_id: r.issueId, message_in_id: row.id, note: r.note }); stats.reviewItems++; }
       // Vendor named for a zero-cost item: notify inventory right away, once, outside the numbered
