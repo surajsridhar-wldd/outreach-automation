@@ -213,6 +213,21 @@ test('a lead naming the vendor for a zero-cost item notifies inventory right awa
   assert.equal(live.stats.inventoryNotified, 1);
   assert.deepEqual(live.f.log.effects.map((e) => e.type), ['hold']);
   for (const mode of ['shadow', 'canary', 'rehearsal']) assert.equal((await go(mode)).sentEmails.length, 0, `${mode} never reaches a real team mailbox`);
+
+  // never on a holiday / weekend / outside the send window: nothing is applied and the reply is retried on the next working run
+  const f = fake({ threads: zcThreads, msgs: [ms({ text: 'Diptanshu was the vendor' })], llm: llmVendor, people: P, issues: zcIssues });
+  const sent = []; f.senders.email = async (a) => { sent.push(a); return { gmailMessageId: 'g', threadId: 't' }; };
+  f.store.insertMessage = async () => 'm1'; f.store.updateMessage = async () => {};
+  const issuesById = new Map(zcIssues.map((i) => [i.id, i]));
+  const args = (now, holidays) => ({ store: f.store, senders: f.senders, interpret: llmVendor, apiKey: 'k', now, settings: { llm_monthly_cap_usd: 3 }, people: P, issuesById, senderEmail: 'suraj@wldd.in', senderName: 'S', mode: 'live', holidays });
+  const holiday = await readReplies(args(new Date('2026-10-02T06:00:00Z'), new Set(['2026-10-02'])));
+  assert.equal(sent.length, 0); assert.equal(holiday.deferredInventory, 1); assert.deepEqual(f.log.effects, []);
+  const saturday = await readReplies(args(new Date('2026-10-03T06:00:00Z'), new Set()));
+  assert.equal(sent.length, 0); assert.deepEqual(f.log.effects, []);
+  const night = await readReplies(args(new Date('2026-10-05T14:00:00Z'), new Set()));   // 19:30 IST
+  assert.equal(sent.length, 0);
+  const next = await readReplies(args(new Date('2026-10-05T06:00:00Z'), new Set()));     // Monday 11:30 IST
+  assert.equal(sent.length, 1); assert.equal(next.inventoryNotified, 1); assert.deepEqual(f.log.effects.map((e) => e.type), ['hold']);
 });
 
 test('a reply from someone else on the thread cannot claim done or set holds', async () => {
